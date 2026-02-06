@@ -869,14 +869,13 @@
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		white-space: nowrap;
-		background: color-mix(in srgb, var(--color-bg) 85%, black);
+		background: var(--color-bg);
 		padding: 0.4rem 1.25rem;
 		border-radius: var(--radius-md);
 		border: 1.5px solid color-mix(in srgb, var(--color-border) 75%, transparent);
 		box-shadow: 
-			inset 0 2px 4px rgba(0, 0, 0, 0.3),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.05),
-			0 1px 0 rgba(255, 255, 255, 0.03);
+			inset 0 1px 2px rgba(0, 0, 0, 0.1),
+			0 1px 0 rgba(255, 255, 255, 0.05);
 	}
 
 	.avatar {
@@ -969,12 +968,14 @@
 
 		.date-divider {
 			justify-content: flex-start;
-			padding-left: 40px;
+			padding-left: 0;
 			margin-bottom: 0.5rem;
 		}
 
 		.date-divider-text {
-			padding-left: 0;
+			margin-left: 4px;
+			padding: 0.35rem 0.75rem;
+			font-size: 0.65rem;
 		}
 
 		.segment-section {
