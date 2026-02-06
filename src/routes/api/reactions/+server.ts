@@ -5,6 +5,7 @@ import { reaction } from '$lib/server/db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { canReact } from '$lib/roles';
+import { isValidEmoji } from '$lib/emojis';
 
 function generateId(): string {
 	return crypto.randomUUID();
@@ -62,6 +63,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 	if (!targetType || !targetId || !emoji) {
 		throw error(400, 'Missing required fields');
+	}
+
+	if (!isValidEmoji(emoji)) {
+		throw error(400, 'Invalid emoji');
 	}
 
 	// Check if user already reacted with this emoji

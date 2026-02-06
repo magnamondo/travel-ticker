@@ -331,13 +331,14 @@
 								<span class="swipe-chevron">‹</span>
 							</div>
 						{/if}
-						<a href="/entry/{milestone.id}" class="timeline-content">
-							<div class="card">
-								{#if milestone.avatar}
-									<img src={milestone.avatar} alt="" class="avatar" />
-								{/if}
-								<div class="card-body">
-									<h3>{milestone.title}</h3>
+						<div class="timeline-content">
+							<a href="/entry/{milestone.id}" style="text-decoration: none; color: inherit; display: block;">
+								<div class="card">
+									{#if milestone.avatar}
+										<img src={milestone.avatar} alt="" class="avatar" />
+									{/if}
+									<div class="card-body">
+										<h3>{milestone.title}</h3>
 									<p>{milestone.description}</p>
 									{#if milestone.media}
 										<div class="media-grid">
@@ -382,8 +383,9 @@
 									{/if}
 								</div>
 							</div>
+							</a>
 							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-							<div class="card-reactions" class:hidden={swipedItemId === milestone.id} onclick={(e) => e.preventDefault()}>
+							<div class="card-reactions" class:hidden={swipedItemId === milestone.id}>
 								<Reactions
 									reactions={getReactions(milestone)}
 									targetType="milestone"
@@ -393,7 +395,7 @@
 									onReact={(emoji) => handleReaction(milestone.id, emoji)}
 								/>
 							</div>
-						</a>
+						</div>
 						{#if milestone.commentCount}
 							<div class="timeline-dot comment-bubble" title="{milestone.commentCount} comments">
 								<svg class="comment-shape" viewBox="0 0 24 24" fill="currentColor">
