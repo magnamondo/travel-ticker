@@ -1,0 +1,13 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 110 110'>
+  <defs>
+    <linearGradient id='tt-gradient' x1='0%' y1='0%' x2='100%' y2='100%'>
+      <stop offset='0%' stop-color='#3b82f6' />
+      <stop offset='50%' stop-color='#2563eb' />
+      <stop offset='100%' stop-color='#eab308' />
+    </linearGradient>
+    <filter id='shadow'>
+      <feDropShadow dx='0' dy='2' stdDeviation='4' flood-opacity='0.5' />
+    </filter>
+  </defs>
+  <path d='M10 83 L10 33 L35 68 L55 28 L75 68 L100 33 L100 83' stroke='url(#tt-gradient)' stroke-width='8' stroke-linecap='round' stroke-linejoin='round' fill='none' filter='url(#shadow)' />
+</svg>

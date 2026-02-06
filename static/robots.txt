@@ -1,0 +1,3 @@
+# Disallow all crawlers - private site
+User-agent: *
+Disallow: /

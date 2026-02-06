@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1770256647833,
+      "tag": "0000_glorious_dark_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1770256990703,
+      "tag": "0001_stale_leech",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770334548479,
+      "tag": "0002_spicy_scarlet_witch",
+      "breakpoints": true
+    }
+  ]
+}
