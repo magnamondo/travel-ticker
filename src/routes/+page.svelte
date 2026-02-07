@@ -7,6 +7,7 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { canReact } from '$lib/roles';
+	import { toasts } from '$lib/stores/toast.svelte';
 
 	// User menu state
 	let userMenuOpen = $state(false);
@@ -158,6 +159,8 @@
 		if (res.ok) {
 			const { reactions } = await res.json();
 			milestoneReactionsMap.set(milestoneId, formatReactions(reactions, data.user?.id));
+		} else {
+			toasts.error('Failed to add reaction');
 		}
 	}
 

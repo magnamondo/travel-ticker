@@ -4,6 +4,7 @@
 	import Reactions from '$lib/components/Reactions.svelte';
 	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
 	import { getMapsUrl } from '$lib/maps';
+	import { toasts } from '$lib/stores/toast.svelte';
 
 	type ReactionCount = {
 		emoji: string;
@@ -15,7 +16,19 @@
 
 	let content = $state('');
 	let submitting = $state(false);
-	let commentReactions = new SvelteMap<string, ReactionCount[]>();
+	let commentReactionsOverrides = new SvelteMap<string, ReactionCount[]>();
+
+	// Get reactions for a comment - use override if set, otherwise use server data
+	function getCommentReactions(commentId: string): ReactionCount[] {
+		if (commentReactionsOverrides.has(commentId)) {
+			return commentReactionsOverrides.get(commentId)!;
+		}
+		const comment = data.comments.find(c => c.id === commentId);
+		if (comment?.reactions) {
+			return formatReactions(comment.reactions, data.user?.id);
+		}
+		return [];
+	}
 
 	// Reactions state - can be null to indicate "use server data", or overridden after user action
 	let localMilestoneReactions = $state<ReactionCount[] | null>(null);
@@ -58,6 +71,8 @@
 		if (res.ok) {
 			const { reactions } = await res.json();
 			localMilestoneReactions = formatReactionsFromApi(reactions, data.user?.id);
+		} else {
+			toasts.error('Failed to add reaction');
 		}
 	}
 
@@ -69,7 +84,9 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			commentReactions.set(commentId, formatReactionsFromApi(reactions, data.user?.id));
+			commentReactionsOverrides.set(commentId, formatReactionsFromApi(reactions, data.user?.id));
+		} else {
+			toasts.error('Failed to add reaction');
 		}
 	}
 
@@ -242,7 +259,7 @@
 						<p class="comment-content">{comment.content}</p>
 						<div class="comment-reactions">
 							<Reactions
-								reactions={commentReactions.get(comment.id) || []}
+								reactions={getCommentReactions(comment.id)}
 								targetType="comment"
 								targetId={comment.id}
 								isLoggedIn={!!data.user}

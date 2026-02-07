@@ -43,20 +43,47 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		.orderBy(comment.createdAt);
 
 	// Fetch reactions for milestone
-	const reactions = await db
+	const milestoneReactions = await db
 		.select()
 		.from(reaction)
 		.where(eq(reaction.milestoneId, params.id));
 
-	// Group reactions by emoji
+	// Group milestone reactions by emoji
 	const reactionCounts: Record<string, { count: number; userReacted: boolean }> = {};
-	for (const r of reactions) {
+	for (const r of milestoneReactions) {
 		if (!reactionCounts[r.emoji]) {
 			reactionCounts[r.emoji] = { count: 0, userReacted: false };
 		}
 		reactionCounts[r.emoji].count++;
 		if (locals.user && r.userId === locals.user.id) {
 			reactionCounts[r.emoji].userReacted = true;
+		}
+	}
+
+	// Fetch reactions for all comments
+	const commentIds = comments.map(c => c.id);
+	const allCommentReactions = [];
+	for (const commentId of commentIds) {
+		const reactions = await db
+			.select()
+			.from(reaction)
+			.where(eq(reaction.commentId, commentId));
+		allCommentReactions.push(...reactions);
+	}
+
+	// Group comment reactions by commentId then by emoji
+	const commentReactionsByComment: Record<string, Record<string, { count: number; userReacted: boolean }>> = {};
+	for (const r of allCommentReactions) {
+		if (!r.commentId) continue;
+		if (!commentReactionsByComment[r.commentId]) {
+			commentReactionsByComment[r.commentId] = {};
+		}
+		if (!commentReactionsByComment[r.commentId][r.emoji]) {
+			commentReactionsByComment[r.commentId][r.emoji] = { count: 0, userReacted: false };
+		}
+		commentReactionsByComment[r.commentId][r.emoji].count++;
+		if (locals.user && r.userId === locals.user.id) {
+			commentReactionsByComment[r.commentId][r.emoji].userReacted = true;
 		}
 	}
 
@@ -105,7 +132,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			milestoneId: c.milestoneId,
 			authorName: c.authorName,
 			content: c.content,
-			createdAt: c.createdAt.toISOString()
+			createdAt: c.createdAt.toISOString(),
+			reactions: commentReactionsByComment[c.id] || {}
 		})),
 		user: locals.user ? {
 			id: locals.user.id,
