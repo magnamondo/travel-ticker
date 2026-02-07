@@ -722,12 +722,12 @@
 		background: var(--color-primary);
 		border-radius: 50%;
 		z-index: 1;
+		box-shadow: var(--shadow-sm);
 		transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
 	}
 
 	.timeline-content:hover ~ .timeline-dot {
-		transform: translate(-50%, -50%) scale(1.3);
-		box-shadow: 0 0 0 4px var(--color-primary-light);
+		box-shadow: var(--shadow-md);
 	}
 
 	.timeline-dot.comment-bubble {
