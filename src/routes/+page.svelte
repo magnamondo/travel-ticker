@@ -268,7 +268,7 @@
 {:else}
 	<div class="user-menu-container">
 		<a href={resolve("/login")} class="user-menu-trigger ghost-trigger" aria-label="Log in">
-			<svg class="ghost-avatar" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+			<svg class="ghost-avatar" viewBox="7 -2 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
 				<path d="M50 8C28 8 18 28 18 45C18 55 16 62 14 68C12 74 18 78 22 75C26 72 30 74 32 78C34 82 38 85 42 82C46 79 50 82 52 85C54 88 58 88 60 85C62 82 66 79 70 82C74 85 78 82 80 78C82 74 86 72 90 75C94 78 100 74 98 68C96 62 94 55 94 45C94 28 84 8 62 8C58 8 54 8 50 8Z" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
 				<ellipse cx="38" cy="42" rx="5" ry="6" fill="currentColor"/>
 				<ellipse cx="58" cy="42" rx="5" ry="6" fill="currentColor"/>
@@ -478,6 +478,22 @@
 
 	.user-avatar {
 		font-size: 1.25rem;
+	}
+
+	.ghost-trigger {
+		text-decoration: none;
+	}
+
+	.ghost-avatar {
+		width: 28px;
+		height: 28px;
+		color: var(--color-text-muted);
+		transition: color 0.2s, transform 0.2s;
+	}
+
+	.ghost-trigger:hover .ghost-avatar {
+		color: var(--color-primary);
+		transform: scale(1.1);
 	}
 
 	.user-menu-backdrop {
