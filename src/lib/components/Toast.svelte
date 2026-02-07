@@ -9,7 +9,7 @@
 			<div
 				class="toast toast-{toast.type}"
 				role="alert"
-				in:fly={{ y: 50, duration: 200 }}
+				in:fly={{ y: -50, duration: 200 }}
 				out:fade={{ duration: 150 }}
 			>
 				<span class="toast-icon">
@@ -29,7 +29,7 @@
 <style>
 	.toast-container {
 		position: fixed;
-		bottom: 1.5rem;
+		top: 1.5rem;
 		right: 1.5rem;
 		z-index: 9999;
 		display: flex;

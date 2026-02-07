@@ -158,9 +158,12 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			milestoneReactionsMap.set(milestoneId, formatReactions(reactions, data.user?.id));
+			const formatted = formatReactions(reactions, data.user?.id);
+			milestoneReactionsMap.set(milestoneId, formatted);
+			const userReacted = formatted.find(r => r.emoji === emoji)?.userReacted ?? false;
+			toasts.success(`${emoji} ${userReacted ? 'added' : 'removed'}`);
 		} else {
-			toasts.error('Failed to add reaction');
+			toasts.error('Failed to update reaction');
 		}
 	}
 
@@ -261,6 +264,18 @@
 				</div>
 			</div>
 		{/if}
+	</div>
+{:else}
+	<div class="user-menu-container">
+		<a href={resolve("/login")} class="user-menu-trigger ghost-trigger" aria-label="Log in">
+			<svg class="ghost-avatar" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M50 8C28 8 18 28 18 45C18 55 16 62 14 68C12 74 18 78 22 75C26 72 30 74 32 78C34 82 38 85 42 82C46 79 50 82 52 85C54 88 58 88 60 85C62 82 66 79 70 82C74 85 78 82 80 78C82 74 86 72 90 75C94 78 100 74 98 68C96 62 94 55 94 45C94 28 84 8 62 8C58 8 54 8 50 8Z" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+				<ellipse cx="38" cy="42" rx="5" ry="6" fill="currentColor"/>
+				<ellipse cx="58" cy="42" rx="5" ry="6" fill="currentColor"/>
+				<path d="M35 60C38 58 42 62 45 58" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+				<path d="M55 58C58 62 62 58 65 60" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+			</svg>
+		</a>
 	</div>
 {/if}
 

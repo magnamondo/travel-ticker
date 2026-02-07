@@ -2,7 +2,7 @@ import type { PageServerLoad, Actions } from './$types';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { milestone, segment, milestoneMedia, comment, reaction, userProfile } from '$lib/server/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { canComment, canReact } from '$lib/roles';
 
@@ -39,8 +39,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	const comments = await db
 		.select()
 		.from(comment)
-		.where(eq(comment.milestoneId, params.id))
-		.orderBy(comment.createdAt);
+		.where(eq(comment.milestoneId, params.id));
 
 	// Fetch reactions for milestone
 	const milestoneReactions = await db
@@ -86,6 +85,20 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			commentReactionsByComment[r.commentId][r.emoji].userReacted = true;
 		}
 	}
+
+	// Calculate total reaction count per comment
+	const getReactionCount = (commentId: string): number => {
+		const reactions = commentReactionsByComment[commentId];
+		if (!reactions) return 0;
+		return Object.values(reactions).reduce((sum, r) => sum + r.count, 0);
+	};
+
+	// Sort comments by reaction count (desc), then by createdAt (desc)
+	comments.sort((a, b) => {
+		const countDiff = getReactionCount(b.id) - getReactionCount(a.id);
+		if (countDiff !== 0) return countDiff;
+		return b.createdAt.getTime() - a.createdAt.getTime();
+	});
 
 	// Get user display name if logged in
 	let userDisplayName: string | null = null;

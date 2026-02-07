@@ -17,6 +17,8 @@
 	let content = $state('');
 	let submitting = $state(false);
 	let commentReactionsOverrides = new SvelteMap<string, ReactionCount[]>();
+	let commentsListEl: HTMLUListElement | null = $state(null);
+	let highlightedCommentId = $state<string | null>(null);
 
 	// Get reactions for a comment - use override if set, otherwise use server data
 	function getCommentReactions(commentId: string): ReactionCount[] {
@@ -70,9 +72,12 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			localMilestoneReactions = formatReactionsFromApi(reactions, data.user?.id);
+			const formatted = formatReactionsFromApi(reactions, data.user?.id);
+			localMilestoneReactions = formatted;
+			const userReacted = formatted.find(r => r.emoji === emoji)?.userReacted ?? false;
+			toasts.success(`${emoji} ${userReacted ? 'added' : 'removed'}`);
 		} else {
-			toasts.error('Failed to add reaction');
+			toasts.error('Failed to update reaction');
 		}
 	}
 
@@ -84,9 +89,12 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			commentReactionsOverrides.set(commentId, formatReactionsFromApi(reactions, data.user?.id));
+			const formatted = formatReactionsFromApi(reactions, data.user?.id);
+			commentReactionsOverrides.set(commentId, formatted);
+			const userReacted = formatted.find(r => r.emoji === emoji)?.userReacted ?? false;
+			toasts.success(`${emoji} ${userReacted ? 'added' : 'removed'}`);
 		} else {
-			toasts.error('Failed to add reaction');
+			toasts.error('Failed to update reaction');
 		}
 	}
 
@@ -197,22 +205,35 @@
 					method="POST"
 					use:enhance={() => {
 						submitting = true;
-						return async ({ update }) => {
+						return async ({ update, result }) => {
 							await update();
 							submitting = false;
-							if (form?.success) {
+							if (result.type === 'success') {
 								content = '';
+								toasts.success('Comment added!');
+								// Scroll to the newest comment (by date) and highlight it
+								setTimeout(() => {
+									if (!data.comments.length) return;
+									// Find the newest comment
+									const newest = data.comments.reduce((a, b) => 
+										new Date(a.createdAt) > new Date(b.createdAt) ? a : b
+									);
+									highlightedCommentId = newest.id;
+									const commentEl = commentsListEl?.querySelector(`[data-comment-id="${newest.id}"]`);
+									commentEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+									// Remove highlight after animation
+									setTimeout(() => {
+										highlightedCommentId = null;
+									}, 4000);
+								}, 100);
+							} else if (result.type === 'failure') {
+								const errorMsg = (result.data as { error?: string })?.error ?? 'Failed to add comment';
+								toasts.error(errorMsg);
 							}
 						};
 					}}
 					class="comment-form"
 				>
-					{#if form?.error}
-						<div class="error-message">{form.error}</div>
-					{/if}
-					{#if form?.success}
-						<div class="success-message">Comment added!</div>
-					{/if}
 					<div class="posting-as">
 						Posting as <strong>{data.user.displayName}</strong>
 					</div>
@@ -247,9 +268,9 @@
 		{/if}
 
 		{#if data.comments.length > 0}
-			<ul class="comments-list">
+			<ul class="comments-list" bind:this={commentsListEl}>
 				{#each data.comments as comment (comment.id)}
-					<li class="comment">
+					<li class="comment" class:comment-highlight={highlightedCommentId === comment.id} data-comment-id={comment.id}>
 						<div class="comment-header">
 							<span class="comment-author">{comment.authorName}</span>
 							<time class="comment-date" datetime={comment.createdAt}>
@@ -544,22 +565,6 @@
 		cursor: not-allowed;
 	}
 
-	.error-message {
-		padding: 0.75rem 1rem;
-		background: color-mix(in srgb, var(--color-error) 15%, transparent);
-		color: var(--color-error);
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-	}
-
-	.success-message {
-		padding: 0.75rem 1rem;
-		background: color-mix(in srgb, var(--color-success) 15%, transparent);
-		color: var(--color-success);
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-	}
-
 	.permission-notice {
 		padding: 1rem;
 		background: var(--color-bg);
@@ -582,6 +587,22 @@
 		padding: 1rem;
 		background: var(--color-bg);
 		border-radius: var(--radius-md);
+		transition: box-shadow 0.3s ease, background-color 0.3s ease;
+	}
+
+	.comment-highlight {
+		animation: highlight-pulse 4s ease-out;
+	}
+
+	@keyframes highlight-pulse {
+		0% {
+			box-shadow: 0 0 0 3px var(--color-primary);
+			background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
+		}
+		100% {
+			box-shadow: 0 0 0 0 transparent;
+			background: var(--color-bg);
+		}
 	}
 
 	.comment-header {

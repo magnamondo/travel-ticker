@@ -1,6 +1,4 @@
 <script lang="ts">
-	import Toast from '$lib/components/Toast.svelte';
-	
 	let { children } = $props();
 	let menuOpen = $state(false);
 </script>
@@ -41,8 +39,6 @@
 		{@render children()}
 	</main>
 </div>
-
-<Toast />
 
 <style>
 	.admin-layout {
