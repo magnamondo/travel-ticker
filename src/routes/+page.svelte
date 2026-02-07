@@ -294,10 +294,8 @@
 	{#each groupedMilestones as group (group.segment + '-' + group.milestones[0]?.id)}
 		<div class="segment-section">
 			<div class="segment-header">
-				<div class="segment-line segment-line-left"></div>
 				<span class="segment-icon">{group.segmentIcon}</span>
 				<span class="segment-name">{group.segment}</span>
-				<div class="segment-line segment-line-right"></div>
 			</div>
 
 			<div class="timeline">
@@ -631,7 +629,7 @@
 	.timeline::before {
 		content: '';
 		position: absolute;
-		left: 50%;
+		left: 24px;
 		transform: translateX(-50%);
 		top: 0;
 		bottom: 0;
@@ -650,16 +648,16 @@
 		display: flex;
 		align-items: center;
 		margin-bottom: 2rem;
-	}
-
-	.timeline-item.left {
+		padding-left: 32px;
 		justify-content: flex-start;
-		padding-right: 50%;
 	}
 
+	/* Override left/right - all items on right side now */
+	.timeline-item.left,
 	.timeline-item.right {
-		justify-content: flex-end;
-		padding-left: 50%;
+		justify-content: flex-start;
+		padding-left: 32px;
+		padding-right: 0;
 	}
 
 	.timeline-content {
@@ -697,16 +695,20 @@
 		gap: 0.25rem;
 		padding: 0.5rem;
 		z-index: 0;
+		/* Position meta at the right edge of the card, hidden by default */
+		right: 0;
+		transform: translateY(-50%) translateX(100%);
+		opacity: 0;
+		pointer-events: none;
 	}
 
-	.timeline-meta.meta-left {
-		right: calc(50% + 2rem);
-		align-items: flex-end;
-	}
-
+	/* Both meta-left and meta-right use same positioning now */
+	.timeline-meta.meta-left,
 	.timeline-meta.meta-right {
-		left: calc(50% + 2rem);
+		right: 0;
+		left: auto;
 		align-items: flex-start;
+		padding-left: 1rem;
 	}
 
 	.meta-item {
@@ -747,7 +749,7 @@
 
 	.timeline-dot {
 		position: absolute;
-		left: 50%;
+		left: 24px;
 		top: 50%;
 		transform: translate(-50%, -50%);
 		margin-top: -1rem; /* Offset for reactions below the card */
@@ -786,25 +788,26 @@
 		position: relative;
 	}
 
-	/* Curved pointer towards timeline dot */
+	/* Curved pointer towards timeline dot - all point left now */
 	.card-pointer {
 		position: absolute;
-		top: calc(50% - 14px);
+		top: calc(50% - 14px); /* 28px height / 2 = 14px for perfect center */
 		width: 16px;
 		height: 28px;
-	}
-
-	.timeline-item.left .card-pointer {
-		right: -16px;
-		transform: scaleX(-1);
-	}
-
-	.timeline-item.right .card-pointer {
 		left: -16px;
 	}
 
+	/* No transform needed - pointer points left by default */
+	.timeline-item.left .card-pointer,
+	.timeline-item.right .card-pointer {
+		left: -16px;
+		right: auto;
+		transform: none;
+	}
+
+	/* All cards use same layout - no row-reverse */
 	.timeline-item.right .card {
-		flex-direction: row-reverse;
+		flex-direction: row;
 	}
 
 	.card-body {
@@ -916,7 +919,7 @@
 
 	.date-divider {
 		display: flex;
-		justify-content: center;
+		justify-content: flex-start;
 		padding: 0.5rem 0;
 		margin-bottom: 1rem;
 		position: relative;
@@ -933,9 +936,13 @@
 		padding: 0.4rem 1.25rem;
 		border-radius: var(--radius-md);
 		border: 1.5px solid color-mix(in srgb, var(--color-border) 75%, transparent);
-		box-shadow: 
+		box-shadow:
 			inset 0 1px 4px rgba(0, 0, 0, 0.2),
 			0 1px 0 rgba(255, 255, 255, 0.05);
+		/* Center on timeline line at 24px */
+		position: relative;
+		left: 24px;
+		transform: translateX(-50%);
 	}
 
 	.avatar {
@@ -1021,6 +1028,7 @@
 			right: auto;
 			left: -16px;
 			transform: none;
+			top: calc(50% - 14px);
 		}
 
 		.card-body h3 {
@@ -1041,6 +1049,9 @@
 			margin-left: 4px;
 			padding: 0.35rem 0.75rem;
 			font-size: 0.65rem;
+			/* Limit centering on mobile */
+			left: 16px;
+			transform: translateX(-20px);
 		}
 
 		.segment-section {
@@ -1210,9 +1221,10 @@
 	.segment-header {
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-start;
 		gap: 0.75rem;
 		padding: 1.5rem 0;
+		padding-left: 8px;
 		margin-bottom: 0.5rem;
 	}
 
