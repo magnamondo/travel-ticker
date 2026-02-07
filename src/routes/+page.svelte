@@ -236,7 +236,7 @@
 </script>
 
 <svelte:head>
-	<title>Toulouse - Tsévié | Travel Ticker | Magnamondo</title>
+	<title>Toulouse - Lomé | Travel Ticker | Magnamondo</title>
 </svelte:head>
 
 {#if data.user}
@@ -287,7 +287,7 @@
 				<polyline points="0,12 8,6 8,18 0,12" fill="#3b82f6" />
 				<line x1="8" y1="12" x2="192" y2="12" stroke="#3b82f6" stroke-width="2" />
 				<polyline points="200,12 192,6 192,18 200,12" fill="#3b82f6" />
-			</svg> <span>Tsévié</span>
+			</svg> <span>Lomé</span>
 		</p>
 	</header>
 

@@ -108,7 +108,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.milestone.title} | Toulouse - Tsévié | Travel Ticker | Magnamondo</title>
+	<title>{data.milestone.title} | Toulouse - Lomé | Travel Ticker | Magnamondo</title>
 </svelte:head>
 
 <div class="entry-page">
