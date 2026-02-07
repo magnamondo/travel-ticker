@@ -983,13 +983,13 @@
 			left: 16px;
 			width: 10px;
 			height: 10px;
-			margin-top: -0.875rem;
+			margin-top: -17px;
 		}
 
 		.timeline-dot.comment-bubble {
 			width: auto;
 			height: auto;
-			margin-top: -0.875rem;
+			margin-top: -17px;
 		}
 
 		.timeline-item.right .card {
