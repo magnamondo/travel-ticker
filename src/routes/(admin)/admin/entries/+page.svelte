@@ -44,6 +44,16 @@
 	let draggingMediaId = $state<string | null>(null);
 	let dragOverMediaId = $state<string | null>(null);
 
+	// Touch drag state for mobile
+	let touchDraggingMediaId = $state<string | null>(null);
+	let touchDragOverMediaId = $state<string | null>(null);
+	let touchStartY = $state(0);
+	let touchStartX = $state(0);
+	let touchCloneInitialLeft = $state(0);
+	let touchCloneInitialTop = $state(0);
+	let touchCurrentMilestoneMedia = $state<Array<{ id: string; sortOrder: number }>>([]);
+	let touchDragClone = $state<HTMLElement | null>(null);
+
 	// Track edited meta per milestone
 	let milestoneMetaMap = new SvelteMap<string, MetaItem[]>();
 
@@ -194,12 +204,17 @@
 			return;
 		}
 		
+		await reorderMedia(draggingMediaId, targetMediaId, milestoneMedia);
+		draggingMediaId = null;
+	}
+
+	// Shared reorder logic for both mouse and touch
+	async function reorderMedia(fromMediaId: string, toMediaId: string, milestoneMedia: Array<{ id: string; sortOrder: number }>) {
 		// Find indices
-		const fromIndex = milestoneMedia.findIndex(m => m.id === draggingMediaId);
-		const toIndex = milestoneMedia.findIndex(m => m.id === targetMediaId);
+		const fromIndex = milestoneMedia.findIndex(m => m.id === fromMediaId);
+		const toIndex = milestoneMedia.findIndex(m => m.id === toMediaId);
 		
 		if (fromIndex === -1 || toIndex === -1) {
-			draggingMediaId = null;
 			return;
 		}
 		
@@ -213,8 +228,6 @@
 			id: item.id,
 			sortOrder: index
 		}));
-		
-		draggingMediaId = null;
 		
 		// Save to server
 		const formData = new FormData();
@@ -232,6 +245,89 @@
 		} catch (err) {
 			console.error('Failed to reorder media:', err);
 		}
+	}
+
+	// Touch event handlers for mobile drag and drop
+	function handleMediaTouchStart(e: TouchEvent, mediaId: string, milestoneMedia: Array<{ id: string; sortOrder: number }>) {
+		const touch = e.touches[0];
+		touchStartX = touch.clientX;
+		touchStartY = touch.clientY;
+		touchDraggingMediaId = mediaId;
+		touchCurrentMilestoneMedia = milestoneMedia;
+		
+		// Create a visual clone for dragging
+		const target = e.currentTarget as HTMLElement;
+		const clone = target.cloneNode(true) as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		
+		// Store initial clone position
+		touchCloneInitialLeft = rect.left;
+		touchCloneInitialTop = rect.top;
+		
+		clone.classList.add('touch-drag-clone');
+		clone.style.position = 'fixed';
+		clone.style.left = `${rect.left}px`;
+		clone.style.top = `${rect.top}px`;
+		clone.style.width = `${rect.width}px`;
+		clone.style.height = `${rect.height}px`;
+		clone.style.zIndex = '10000';
+		clone.style.pointerEvents = 'none';
+		clone.style.opacity = '0.8';
+		clone.style.transform = 'scale(1.1)';
+		clone.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+		
+		document.body.appendChild(clone);
+		touchDragClone = clone;
+	}
+
+	function handleMediaTouchMove(e: TouchEvent) {
+		if (!touchDraggingMediaId || !touchDragClone) return;
+		
+		e.preventDefault(); // Prevent scrolling while dragging
+		
+		const touch = e.touches[0];
+		const deltaX = touch.clientX - touchStartX;
+		const deltaY = touch.clientY - touchStartY;
+		
+		// Move the clone based on initial position + delta
+		touchDragClone.style.left = `${touchCloneInitialLeft + deltaX}px`;
+		touchDragClone.style.top = `${touchCloneInitialTop + deltaY}px`;
+		
+		// Find element under touch point
+		touchDragClone.style.display = 'none';
+		const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+		touchDragClone.style.display = '';
+		
+		// Find the media-thumb ancestor
+		const thumbBelow = elementBelow?.closest('.media-thumb') as HTMLElement | null;
+		if (thumbBelow) {
+			const mediaId = thumbBelow.dataset.mediaId;
+			if (mediaId && mediaId !== touchDraggingMediaId) {
+				touchDragOverMediaId = mediaId;
+			} else {
+				touchDragOverMediaId = null;
+			}
+		} else {
+			touchDragOverMediaId = null;
+		}
+	}
+
+	async function handleMediaTouchEnd() {
+		// Remove the clone
+		if (touchDragClone) {
+			touchDragClone.remove();
+			touchDragClone = null;
+		}
+		
+		// Perform reorder if we have a valid drop target
+		if (touchDraggingMediaId && touchDragOverMediaId && touchDraggingMediaId !== touchDragOverMediaId) {
+			await reorderMedia(touchDraggingMediaId, touchDragOverMediaId, touchCurrentMilestoneMedia);
+		}
+		
+		// Reset touch state
+		touchDraggingMediaId = null;
+		touchDragOverMediaId = null;
+		touchCurrentMilestoneMedia = [];
 	}
 </script>
 
@@ -363,15 +459,19 @@
 											{#each milestone.media as item (item.id)}
 												<div 
 													class="media-thumb"
-													class:dragging={draggingMediaId === item.id}
-													class:drag-over={dragOverMediaId === item.id}
+													class:dragging={draggingMediaId === item.id || touchDraggingMediaId === item.id}
+													class:drag-over={dragOverMediaId === item.id || touchDragOverMediaId === item.id}
 													draggable="true"
 													role="listitem"
+													data-media-id={item.id}
 													ondragstart={(e) => handleMediaDragStart(e, item.id)}
 													ondragover={(e) => handleMediaDragOver(e, item.id)}
 													ondragleave={handleMediaDragLeave}
 													ondragend={handleMediaDragEnd}
 													ondrop={(e) => handleMediaDrop(e, item.id, milestone.media)}
+													ontouchstart={(e) => handleMediaTouchStart(e, item.id, milestone.media)}
+													ontouchmove={handleMediaTouchMove}
+													ontouchend={handleMediaTouchEnd}
 												>
 													<div class="drag-handle" title="Drag to reorder">⋮⋮</div>
 													{#if item.type === 'video'}
@@ -390,7 +490,7 @@
 												</div>
 											{/each}
 										</div>
-										<p class="reorder-hint">Drag thumbnails to reorder</p>
+										<p class="reorder-hint">Drag or hold & drag to reorder</p>
 									{:else}
 										<p class="no-media-hint">No media attached</p>
 									{/if}
@@ -976,6 +1076,17 @@
 	.media-thumb:hover .drag-handle {
 		opacity: 1;
 	}
+
+	/* Show drag handle on touch devices */
+	@media (hover: none) and (pointer: coarse) {
+		.drag-handle {
+			opacity: 0.7;
+		}
+		
+		.media-thumb {
+			touch-action: none;
+		}
+	}
 	
 	.reorder-hint {
 		font-size: 0.75rem;
@@ -1264,5 +1375,23 @@
 		.btn-small-secondary {
 			width: 100%;
 		}
+	}
+
+	/* Global styles for touch drag clone (appended to body) */
+	:global(.touch-drag-clone) {
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+		background: var(--color-bg-elevated);
+	}
+
+	:global(.touch-drag-clone img) {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	:global(.touch-drag-clone .drag-handle),
+	:global(.touch-drag-clone .delete-media-form) {
+		display: none;
 	}
 </style>

@@ -334,6 +334,9 @@
 						<div class="timeline-content">
 							<a href="/entry/{milestone.id}" style="text-decoration: none; color: inherit; display: block;">
 								<div class="card">
+									<svg class="card-pointer" viewBox="0 0 16 28" preserveAspectRatio="none">
+										<path d="M16 0 Q 6 5 0 14 Q 6 23 16 28 Z" fill="var(--color-bg-elevated)"/>
+									</svg>
 									{#if milestone.avatar}
 										<img src={milestone.avatar} alt="" class="avatar" />
 									{/if}
@@ -636,7 +639,7 @@
 	}
 
 	.timeline-content:hover .card {
-		box-shadow: var(--shadow-md);
+		filter: drop-shadow(var(--shadow-md));
 	}
 
 	.card-reactions {
@@ -719,6 +722,12 @@
 		background: var(--color-primary);
 		border-radius: 50%;
 		z-index: 1;
+		transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+	}
+
+	.timeline-content:hover ~ .timeline-dot {
+		transform: translate(-50%, -50%) scale(1.3);
+		box-shadow: 0 0 0 4px var(--color-primary-light);
 	}
 
 	.timeline-dot.comment-bubble {
@@ -738,7 +747,26 @@
 		background: var(--color-bg-elevated);
 		border-radius: var(--radius-md);
 		padding: 1rem;
-		box-shadow: var(--shadow-sm);
+		filter: drop-shadow(var(--shadow-sm));
+		transition: filter 0.2s ease;
+		position: relative;
+	}
+
+	/* Curved pointer towards timeline dot */
+	.card-pointer {
+		position: absolute;
+		top: calc(50% - 14px);
+		width: 16px;
+		height: 28px;
+	}
+
+	.timeline-item.left .card-pointer {
+		right: -16px;
+		transform: scaleX(-1);
+	}
+
+	.timeline-item.right .card-pointer {
+		left: -16px;
 	}
 
 	.timeline-item.right .card {
@@ -958,6 +986,14 @@
 			padding: 0.875rem;
 			gap: 0.75rem;
 			transition: box-shadow 0.2s ease;
+		}
+
+		/* On mobile, all cards are on the right, pointer points left */
+		.timeline-item.left .card-pointer,
+		.timeline-item.right .card-pointer {
+			right: auto;
+			left: -16px;
+			transform: none;
 		}
 
 		.card-body h3 {
