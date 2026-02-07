@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { milestone, segment, milestoneMedia, reaction, videoJob } from '$lib/server/db/schema';
+import { milestone, segment, milestoneMedia, reaction, videoJob, comment } from '$lib/server/db/schema';
 import { desc, eq, sql, count, and } from 'drizzle-orm';
 
 type MetaItem = {
@@ -120,6 +120,21 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		return acc;
 	}, {} as Record<string, typeof allReactions>);
 
+	// Fetch comment counts for all milestones
+	const commentCounts = await db
+		.select({
+			milestoneId: comment.milestoneId,
+			count: count()
+		})
+		.from(comment)
+		.where(sql`${comment.milestoneId} IN ${milestoneIds}`)
+		.groupBy(comment.milestoneId);
+
+	const commentCountByMilestone = commentCounts.reduce((acc, c) => {
+		acc[c.milestoneId] = c.count;
+		return acc;
+	}, {} as Record<string, number>);
+
 	// Build response
 	const milestones: MilestoneResponse[] = milestoneList.map((m, index) => {
 		const date = new Date(m.date);
@@ -169,6 +184,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			userReacted: data.userReacted
 		}));
 
+		const commentCount = commentCountByMilestone[m.id] || 0;
+
 		return {
 			id: m.id,
 			title: m.title,
@@ -184,6 +201,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			segment: m.segmentName,
 			segmentIcon: m.segmentIcon,
 			meta: m.meta && m.meta.length > 0 ? m.meta : undefined,
+			commentCount: commentCount > 0 ? commentCount : undefined,
 			reactions: reactions.length > 0 ? reactions : undefined
 		};
 	});

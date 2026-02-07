@@ -402,7 +402,7 @@
 						{#if milestone.commentCount}
 							<div class="timeline-dot comment-bubble" title="{milestone.commentCount} comments">
 								<svg class="comment-shape" viewBox="0 0 24 24" fill="currentColor">
-									<path d="M2 6a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H7l-5 5V6z"/>
+									<rect x="2" y="2" width="20" height="20" rx="4" ry="4"/>
 								</svg>
 								<span class="comment-count">{milestone.commentCount}</span>
 							</div>
@@ -785,19 +785,15 @@
 	}
 
 	.comment-shape {
-		width: 24px;
-		height: 28px;
+		width: 22px;
+		height: 22px;
 		color: var(--color-accent);
 		filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2));
 	}
 
-	.timeline-item.right .comment-shape {
-		transform: scaleX(-1);
-	}
-
 	.comment-count {
 		position: absolute;
-		top: 44%;
+		top: 50%;
 		left: 50%;
 		transform: translate(-50%, -50%);
 		font-size: 0.65rem;
@@ -944,7 +940,7 @@
 
 		.timeline-item.left,
 		.timeline-item.right {
-			padding-left: 40px;
+			padding-left: 48px;
 			padding-right: 0;
 			justify-content: flex-start;
 		}
@@ -953,12 +949,13 @@
 			left: 16px;
 			width: 10px;
 			height: 10px;
-			margin-top: -0.75rem;
+			margin-top: -0.875rem;
 		}
 
 		.timeline-dot.comment-bubble {
 			width: auto;
 			height: auto;
+			margin-top: -0.875rem;
 		}
 
 		.timeline-item.right .card {
@@ -966,15 +963,11 @@
 		}
 
 		.comment-shape {
-			width: 22px;
-			height: 22px;
-			transform: scaleX(-1);
+			width: 20px;
+			height: 20px;
 		}
 
 		.comment-count {
-			top: 50%;
-			left: 50%;
-			transform: translate(-50%, -50%);
 			font-size: 0.55rem;
 		}
 
@@ -1022,7 +1015,7 @@
 
 		.segment-header {
 			padding: 1rem 0;
-			padding-left: 40px;
+			padding-left: 48px;
 			margin-bottom: 0;
 		}
 
