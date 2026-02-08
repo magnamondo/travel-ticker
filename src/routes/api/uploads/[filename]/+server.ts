@@ -1,8 +1,9 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { readFile, stat, realpath } from 'fs/promises';
+import { stat, realpath } from 'fs/promises';
+import { createReadStream, existsSync } from 'fs';
 import { join } from 'path';
-import { existsSync } from 'fs';
+import { Readable } from 'stream';
 
 // Use data directory for persistence (works with Docker volume)
 const DATA_DIR = process.env.DATA_DIR || 'data';
@@ -62,14 +63,32 @@ export const GET: RequestHandler = async ({ params }) => {
 	}
 
 	try {
-		const fileBuffer = await readFile(filePath);
 		const fileStat = await stat(filePath);
 		
 		// Determine MIME type from extension
 		const ext = filename.split('.').pop()?.toLowerCase() || '';
 		const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
 
-		return new Response(fileBuffer, {
+		// Create a Node.js read stream
+		const nodeStream = createReadStream(filePath);
+		
+		// Convert to Web ReadableStream for SvelteKit Response
+		// @ts-ignore - Readable.toWeb is available in newer Node versions or we can pass the node stream directly 
+		// if the adapter supports it, but standard Web Response expects a Web Stream or Uint8Array.
+		// SvelteKit/Node adapter often handles Node streams, but let's be spec compliant if possible.
+		// However, passing the node stream directly to `new Response` works in SvelteKit because it polyfills/handles it.
+		const stream = new ReadableStream({
+			start(controller) {
+				nodeStream.on('data', (chunk) => controller.enqueue(chunk));
+				nodeStream.on('end', () => controller.close());
+				nodeStream.on('error', (err) => controller.error(err));
+			},
+			cancel() {
+				nodeStream.destroy();
+			}
+		});
+
+		return new Response(stream, {
 			headers: {
 				'Content-Type': mimeType,
 				'Content-Length': fileStat.size.toString(),

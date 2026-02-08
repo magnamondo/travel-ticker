@@ -58,6 +58,12 @@
 		ttl 60s
 		# Serve stale content for up to 300s if backend is down
 		stale 300s
+		
+		# Exclude uploads (images/videos) from in-memory cache
+		# These are large and will fill up memory quickly
+		regex {
+			exclude /api/uploads/.*
+		}
 	}
 
 	# Protect Souin API (only allow internal IPs)
