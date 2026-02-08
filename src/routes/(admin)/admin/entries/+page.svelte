@@ -731,7 +731,7 @@
 															videoJobId={item.videoJobId}
 														/>
 													{:else}
-														<img src={item.url} alt="" />
+														<img src={item.thumbnailUrl || item.url} alt="" />
 													{/if}
 													<form method="POST" action="?/deleteMedia" use:enhance class="delete-media-form">
 														<input type="hidden" name="mediaId" value={item.id} />
@@ -1008,6 +1008,10 @@
 		background: var(--color-bg-secondary);
 	}
 
+	.btn-icon-small.danger {
+		color: var(--color-error);
+	}
+
 	.btn-icon-small.danger:hover {
 		background: var(--color-error);
 		color: white;
@@ -1243,6 +1247,7 @@
 		font-size: 0.875rem;
 		font-family: inherit;
 		resize: vertical;
+		min-height: 4rem;
 	}
 
 	textarea:focus {

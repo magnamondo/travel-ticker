@@ -56,7 +56,7 @@
 						<span class="play-icon">▶</span>
 					</div>
 				{:else}
-					<img src={item.url} alt="" class="media-thumbnail" />
+					<img src={item.thumbnailUrl || item.url} alt="" class="media-thumbnail" />
 				{/if}
 				<div class="media-info">
 					<span class="media-type">{item.type}</span>

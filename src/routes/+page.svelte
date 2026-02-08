@@ -1005,7 +1005,7 @@
 		.timeline-item.left,
 		.timeline-item.right {
 			padding-left: 48px;
-			padding-right: 0;
+			padding-right: 0.75rem;
 			justify-content: flex-start;
 		}
 
