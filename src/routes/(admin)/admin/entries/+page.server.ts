@@ -434,6 +434,8 @@ export const actions: Actions = {
 		}
 
 		try {
+			const order = JSON.parse(orderJson) as Array<{ id: string; sortOrder: number }>;
+
 			// Get milestone ID from first item for cache invalidation
 			let milestoneId: string | undefined;
 			if (order.length > 0) {
@@ -453,9 +455,7 @@ export const actions: Actions = {
 			}
 
 			if (milestoneId) {
-				await invalidateCache(['home', `entry-${milestoneId}`]
-					.set({ sortOrder: item.sortOrder })
-					.where(eq(milestoneMedia.id, item.id));
+				await invalidateCache(['home', `entry-${milestoneId}`]);
 			}
 
 			return { success: true, message: 'Media reordered!' };
@@ -465,9 +465,7 @@ export const actions: Actions = {
 	},
 
 	reorderMilestones: async ({ request }) => {
-		cawait invalidateCache(['home']);
-
-			onst formData = await request.formData();
+		const formData = await request.formData();
 		const orderJson = formData.get('order') as string;
 
 		if (!orderJson) {
@@ -483,6 +481,8 @@ export const actions: Actions = {
 					.set({ sortOrder: item.sortOrder })
 					.where(eq(milestone.id, item.id));
 			}
+
+			await invalidateCache(['home']);
 
 			return { success: true, message: 'Entries reordered!' };
 		} catch {
