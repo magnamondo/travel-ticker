@@ -120,6 +120,9 @@ async function isFFmpegAvailable(): Promise<boolean> {
 const MAX_VIDEO_WIDTH = 1920;
 const MAX_VIDEO_HEIGHT = 1080;
 
+// Thumbnail size matching image.ts for consistent grid layout
+const THUMBNAIL_SIZE = 600;
+
 interface VideoDimensions {
 	width: number;
 	height: number;
@@ -196,13 +199,36 @@ function needsTranscoding(mimeType: string, filename: string): boolean {
 	return !webCompatibleExts.includes(ext);
 }
 
+/**
+ * Convert a JPEG to progressive encoding using ImageMagick
+ * Modifies file in-place
+ */
+async function makeProgressiveJpeg(inputPath: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('convert', [
+			inputPath,
+			'-interlace', 'Plane',
+			inputPath
+		]);
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error('ImageMagick progressive conversion failed'));
+			}
+		});
+	});
+}
+
 async function generateThumbnail(inputPath: string, outputPath: string, timeOffset = 1): Promise<boolean> {
-	return new Promise((resolve) => {
+	const success = await new Promise<boolean>((resolve) => {
+		// Center-cropped square thumbnail matching image thumbnails
 		const proc = spawn('ffmpeg', [
 			'-i', inputPath,
 			'-ss', timeOffset.toString(),
 			'-vframes', '1',
-			'-vf', 'scale=320:-1',
+			'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
 			'-y',
 			outputPath
 		]);
@@ -210,6 +236,17 @@ async function generateThumbnail(inputPath: string, outputPath: string, timeOffs
 		proc.on('error', () => resolve(false));
 		proc.on('close', (code) => resolve(code === 0));
 	});
+
+	if (success) {
+		// Convert to progressive JPEG
+		try {
+			await makeProgressiveJpeg(outputPath);
+		} catch {
+			// Ignore - baseline JPEG is acceptable fallback
+		}
+	}
+
+	return success;
 }
 
 /**

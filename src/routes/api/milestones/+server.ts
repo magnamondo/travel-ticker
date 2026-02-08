@@ -62,7 +62,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		.from(milestone)
 		.innerJoin(segment, eq(milestone.segmentId, segment.id))
 		.where(eq(milestone.published, true))
-		.orderBy(segment.sortOrder, desc(milestone.date))
+		.orderBy(desc(segment.sortOrder), desc(milestone.date))
 		.limit(limit + 1) // Fetch one extra to check if there are more
 		.offset(offset);
 

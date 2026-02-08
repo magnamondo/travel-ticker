@@ -6,6 +6,9 @@ import { db } from './db';
 import { videoJob } from './db/schema';
 import { eq } from 'drizzle-orm';
 
+// Thumbnail size matching image.ts for consistent grid layout
+const THUMBNAIL_SIZE = 600;
+
 export interface VideoProcessingResult {
 	success: boolean;
 	outputPath?: string;
@@ -70,6 +73,28 @@ export async function isFFmpegAvailable(): Promise<boolean> {
 		const proc = spawn('ffmpeg', ['-version']);
 		proc.on('error', () => resolve(false));
 		proc.on('close', (code) => resolve(code === 0));
+	});
+}
+
+/**
+ * Convert a JPEG to progressive encoding using ImageMagick
+ * Modifies file in-place
+ */
+async function makeProgressiveJpeg(inputPath: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('convert', [
+			inputPath,
+			'-interlace', 'Plane',
+			inputPath
+		]);
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error('ImageMagick progressive conversion failed'));
+			}
+		});
 	});
 }
 
@@ -177,13 +202,15 @@ export async function transcodeToWebFormat(inputPath: string): Promise<VideoProc
 		});
 
 		// Generate thumbnail (at 1 second or 10% into the video)
+		// Center-cropped square matching image thumbnails
+		// Note: ffmpeg creates baseline JPEG, we'll convert to progressive after
 		const thumbnailTime = Math.min(1, duration * 0.1);
 		await new Promise<void>((resolve, reject) => {
 			const proc = spawn('ffmpeg', [
 				'-i', outputPath,
 				'-ss', thumbnailTime.toString(),
 				'-vframes', '1',
-				'-vf', 'scale=320:-1',
+				'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
 				'-y',
 				thumbnailPath
 			]);
@@ -198,6 +225,13 @@ export async function transcodeToWebFormat(inputPath: string): Promise<VideoProc
 				}
 			});
 		});
+
+		// Convert thumbnail to progressive JPEG using ImageMagick if available
+		try {
+			await makeProgressiveJpeg(thumbnailPath);
+		} catch {
+			// Ignore - baseline JPEG is acceptable fallback
+		}
 
 		// Delete original file and rename transcoded file
 		await unlink(inputPath);
@@ -220,18 +254,19 @@ export async function transcodeToWebFormat(inputPath: string): Promise<VideoProc
 
 /**
  * Generate a thumbnail for a video
+ * Center-cropped square matching image thumbnails
  */
 export async function generateThumbnail(inputPath: string, outputPath: string, timeOffset = 1): Promise<boolean> {
 	if (!(await isFFmpegAvailable())) {
 		return false;
 	}
 
-	return new Promise((resolve) => {
+	const success = await new Promise<boolean>((resolve) => {
 		const proc = spawn('ffmpeg', [
 			'-i', inputPath,
 			'-ss', timeOffset.toString(),
 			'-vframes', '1',
-			'-vf', 'scale=320:-1',
+			'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
 			'-y',
 			outputPath
 		]);
@@ -239,4 +274,15 @@ export async function generateThumbnail(inputPath: string, outputPath: string, t
 		proc.on('error', () => resolve(false));
 		proc.on('close', (code) => resolve(code === 0));
 	});
+
+	if (success) {
+		// Convert to progressive JPEG
+		try {
+			await makeProgressiveJpeg(outputPath);
+		} catch {
+			// Ignore - baseline JPEG is acceptable fallback
+		}
+	}
+
+	return success;
 }

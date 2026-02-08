@@ -183,7 +183,7 @@
 		return `${date.month} ${date.day}, ${date.year}`;
 	}
 
-	// Group milestones by segment (descending order)
+	// Group milestones by segment (API returns in correct order: newest first)
 	let groupedMilestones = $derived.by(() => {
 		const groups: GroupedMilestones[] = [];
 		let currentGroup: GroupedMilestones | null = null;
@@ -200,7 +200,7 @@
 			currentGroup.milestones.push(milestone);
 		}
 
-		return groups.reverse();
+		return groups;
 	});
 
 	async function loadMore() {
@@ -208,7 +208,7 @@
 
 		loading = true;
 		try {
-			const response = await fetch(`/api/milestones?offset=${milestones.length}&limit=10`);
+			const response = await fetch(`/api/milestones?offset=${milestones.length}&limit=3`);
 			const result = await response.json();
 			additionalMilestones = [...additionalMilestones, ...result.milestones];
 			hasMore = result.hasMore;
@@ -841,16 +841,30 @@
 	}
 
 	.card-body p {
-		font-size: 0.875rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
 		margin: 0;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 
 	.media-grid {
-		display: flex;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
-		flex-wrap: wrap;
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.25rem;
+		margin-top: 0.75rem;
+	}
+
+	/* 1 image: full width, landscape */
+	.media-grid:has(.thumbnail-button:only-child) {
+		grid-template-columns: 1fr;
+	}
+
+	/* 2 images: 2 columns */
+	.media-grid:has(.thumbnail-button:nth-child(2)):not(:has(.thumbnail-button:nth-child(3))) {
+		grid-template-columns: repeat(2, 1fr);
 	}
 
 	.thumbnail-button {
@@ -860,13 +874,24 @@
 		cursor: pointer;
 		border-radius: var(--radius-sm);
 		overflow: hidden;
-		transition: transform 0.2s, box-shadow 0.2s;
+		transition: filter 0.15s;
 		position: relative;
+		aspect-ratio: 1;
+	}
+
+	/* Single image: landscape aspect ratio */
+	.thumbnail-button:only-child {
+		aspect-ratio: 16 / 10;
+	}
+
+	/* 3+ images: first image spans 2 columns and 2 rows */
+	.media-grid:has(.thumbnail-button:nth-child(3)) .thumbnail-button:first-child {
+		grid-column: span 2;
+		grid-row: span 2;
 	}
 
 	.thumbnail-button:hover {
-		transform: scale(1.1);
-		box-shadow: var(--shadow-md);
+		filter: brightness(0.9);
 	}
 
 	.thumbnail-button:disabled {
@@ -895,16 +920,16 @@
 	}
 
 	.video-thumb .play-overlay svg {
-		width: 20px;
-		height: 20px;
+		width: 28px;
+		height: 28px;
 		color: white;
 		filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 	}
 
 	.thumbnail {
-		width: 60px;
-		height: 60px;
-		border-radius: var(--radius-sm);
+		width: 100%;
+		height: 100%;
+		border-radius: var(--radius-md);
 		object-fit: cover;
 		background: var(--color-border);
 		display: block;
@@ -915,6 +940,8 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--color-text-muted);
+		width: 100%;
+		height: 100%;
 	}
 
 	.date-divider {
@@ -1037,6 +1064,12 @@
 
 		.card-body p {
 			font-size: 0.8rem;
+		}
+
+		/* Mobile: 3-column grid same as desktop */
+		.media-grid {
+			grid-template-columns: repeat(3, 1fr);
+			gap: 0.2rem;
 		}
 
 		.date-divider {

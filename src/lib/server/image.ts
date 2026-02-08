@@ -10,6 +10,11 @@ import { join, dirname, basename, extname } from 'path';
 // - Used by platforms like Facebook, Flickr, etc.
 const MAX_IMAGE_DIMENSION = 2048;
 
+// Thumbnail size for the grid layout
+// 600px covers the featured image (2x2 in 3-column grid) on most screens
+// and provides good quality for retina displays
+const THUMBNAIL_SIZE = 600;
+
 export interface ImageDimensions {
 	width: number;
 	height: number;
@@ -126,8 +131,9 @@ function convertWithImageMagick(inputPath: string, outputPath: string): Promise<
 	return new Promise((resolve, reject) => {
 		const proc = spawn('convert', [
 			inputPath,
-			'-quality', '90',
 			'-auto-orient',  // Respect EXIF orientation
+			'-interlace', 'Plane',  // Progressive JPEG
+			'-quality', '90',
 			outputPath
 		]);
 
@@ -195,7 +201,7 @@ export function isImageFile(mimeType: string): boolean {
 
 /**
  * Generate a thumbnail for an image file using ImageMagick or ffmpeg
- * Creates a 100x100 thumbnail (center cropped)
+ * Creates a 600x600 thumbnail (center cropped) for the grid layout
  */
 export async function generateImageThumbnail(
 	inputPath: string,
@@ -242,15 +248,17 @@ export async function generateImageThumbnail(
  */
 function generateThumbnailWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		// Use ImageMagick to create a 100x100 thumbnail
+		// Use ImageMagick to create a thumbnail
 		// -thumbnail respects EXIF orientation and strips metadata for smaller files
-		// 100x100^ means fill the 100x100 box, then we crop to exact size
+		// Size^ means fill the box, then we crop to exact size
+		// -interlace Plane creates progressive JPEG for better perceived loading
 		const proc = spawn('convert', [
 			inputPath,
 			'-auto-orient',
-			'-thumbnail', '100x100^',
+			'-thumbnail', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}^`,
 			'-gravity', 'center',
-			'-extent', '100x100',
+			'-extent', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}`,
+			'-interlace', 'Plane',
 			'-quality', '85',
 			outputPath
 		]);
@@ -273,14 +281,16 @@ function generateThumbnailWithImageMagick(inputPath: string, outputPath: string)
 
 /**
  * Generate thumbnail using ffmpeg as fallback
+ * Note: ffmpeg JPEG output doesn't support progressive encoding natively,
+ * but ImageMagick (primary method) does. This is acceptable as a fallback.
  */
 function generateThumbnailWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		// Use ffmpeg to create a 100x100 center-cropped thumbnail
+		// Use ffmpeg to create a center-cropped thumbnail
 		const proc = spawn('ffmpeg', [
 			'-y',
 			'-i', inputPath,
-			'-vf', 'scale=100:100:force_original_aspect_ratio=increase,crop=100:100',
+			'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
 			'-frames:v', '1',
 			'-q:v', '2',
 			outputPath
@@ -470,6 +480,7 @@ function resizeWithImageMagick(inputPath: string, outputPath: string, maxDimensi
 			inputPath,
 			'-auto-orient',
 			'-resize', `${maxDimension}x${maxDimension}>`,  // Only shrink larger images, maintain aspect ratio
+			'-interlace', 'Plane',  // Progressive JPEG
 			'-quality', '90',
 			outputPath
 		]);

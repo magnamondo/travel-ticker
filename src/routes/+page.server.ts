@@ -3,7 +3,7 @@ import * as auth from '$lib/server/auth';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, locals }) => {
-	const response = await fetch('/api/milestones?offset=0&limit=10');
+	const response = await fetch('/api/milestones?offset=0&limit=3');
 	const data = await response.json();
 	
 	return {
