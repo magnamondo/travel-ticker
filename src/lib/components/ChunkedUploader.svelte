@@ -230,6 +230,7 @@
 			uploadState = 'completed';
 			result = uploadResult;
 			onUploadComplete?.(uploadResult);
+			onAllUploadsComplete?.([uploadResult]);
 		} catch (err) {
 			if ((err as Error).message === 'Upload cancelled') {
 				// Check if this was a pause or a cancel
@@ -315,7 +316,7 @@
 		
 		for (let i = 0; i < fileQueue.length; i++) {
 			const item = fileQueue[i];
-			if (item.state === 'error') continue; // Skip files with validation errors
+			if (item.state === 'error' || item.state === 'completed') continue; // Skip files with validation errors or already completed
 			
 			currentUploadIndex = i;
 			item.state = 'preparing';

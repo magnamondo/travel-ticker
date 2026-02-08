@@ -1,7 +1,7 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
 import { milestone, milestoneMedia } from '$lib/server/db/schema';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and } from 'drizzle-orm';
 import { error, fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
 
@@ -34,6 +34,17 @@ export const actions: Actions = {
 
 		if (!type || !url) {
 			return fail(400, { error: 'Type and URL are required' });
+		}
+
+		// Check for duplicate URL in this milestone
+		const [duplicate] = await db
+			.select()
+			.from(milestoneMedia)
+			.where(and(eq(milestoneMedia.milestoneId, params.id), eq(milestoneMedia.url, url)));
+
+		if (duplicate) {
+			// Already exists, skip insertion
+			return { success: true, skipped: true };
 		}
 
 		// Get max sort order
