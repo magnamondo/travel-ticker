@@ -86,8 +86,11 @@
 	let touchStartX = $state(0);
 	let touchStartY = $state(0);
 	let touchDeltaX = $state(0);
+	let touchDeltaY = $state(0);
 	let isSwiping = $state(false);
+	let swipeDirection = $state<'horizontal' | 'vertical' | null>(null);
 	const SWIPE_THRESHOLD = 50; // minimum distance for a swipe
+	const SWIPE_VERTICAL_THRESHOLD = 100; // requires more distance to close
 	const SWIPE_VELOCITY_THRESHOLD = 0.3; // minimum velocity for a quick swipe
 	let touchStartTime = $state(0);
 	
@@ -98,7 +101,9 @@
 		touchStartX = touch.clientX;
 		touchStartY = touch.clientY;
 		touchDeltaX = 0;
+		touchDeltaY = 0;
 		isSwiping = false;
+		swipeDirection = null;
 		touchStartTime = Date.now();
 	}
 	
@@ -109,41 +114,69 @@
 		const deltaX = touch.clientX - touchStartX;
 		const deltaY = touch.clientY - touchStartY;
 		
-		// Only start swiping if horizontal movement is greater than vertical
-		if (!isSwiping && Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
-			isSwiping = true;
+		// Determine swipe direction if not already set
+		if (!isSwiping) {
+			if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+				isSwiping = true;
+				if (Math.abs(deltaX) > Math.abs(deltaY)) {
+					swipeDirection = 'horizontal';
+				} else {
+					swipeDirection = 'vertical';
+				}
+			}
 		}
 		
 		if (isSwiping) {
-			e.preventDefault(); // Prevent scrolling while swiping
-			touchDeltaX = deltaX;
+			// e.preventDefault(); // Prevent scrolling while swiping - handled by touch-action: none
+			if (swipeDirection === 'horizontal') {
+				touchDeltaX = deltaX;
+				touchDeltaY = 0;
+			} else {
+				touchDeltaX = 0;
+				touchDeltaY = deltaY;
+			}
 		}
 	}
 	
 	function handleTouchEnd(e: TouchEvent) {
 		if (!isSwiping) {
 			touchDeltaX = 0;
+			touchDeltaY = 0;
 			return;
 		}
 		
 		const elapsed = Date.now() - touchStartTime;
-		const velocity = Math.abs(touchDeltaX) / elapsed;
 		
-		// Determine if it's a valid swipe based on distance or velocity
-		const isValidSwipe = Math.abs(touchDeltaX) > SWIPE_THRESHOLD || velocity > SWIPE_VELOCITY_THRESHOLD;
-		
-		if (isValidSwipe && mediaItems.length > 1) {
-			if (touchDeltaX > 0) {
-				prev(); // Swipe right = previous
-			} else {
-				next(); // Swipe left = next
+		if (swipeDirection === 'horizontal') {
+			const velocity = Math.abs(touchDeltaX) / elapsed;
+			// Determine if it's a valid swipe based on distance or velocity
+			const isValidSwipe = Math.abs(touchDeltaX) > SWIPE_THRESHOLD || velocity > SWIPE_VELOCITY_THRESHOLD;
+			
+			if (isValidSwipe && mediaItems.length > 1) {
+				if (touchDeltaX > 0) {
+					prev(); // Swipe right = previous
+				} else {
+					next(); // Swipe left = next
+				}
+			}
+		} else if (swipeDirection === 'vertical') {
+			const velocity = Math.abs(touchDeltaY) / elapsed;
+			const isValidSwipe = Math.abs(touchDeltaY) > SWIPE_VERTICAL_THRESHOLD || velocity > SWIPE_VELOCITY_THRESHOLD;
+			
+			if (isValidSwipe) {
+				onclose?.();
 			}
 		}
 		
 		// Reset
 		touchDeltaX = 0;
+		touchDeltaY = 0;
 		isSwiping = false;
+		swipeDirection = null;
 	}
+
+	let overlayOpacity = $derived(Math.max(0, 1 - Math.abs(touchDeltaY) / 300));
+	let contentScale = $derived(Math.max(0.5, 1 - Math.abs(touchDeltaY) / 600));
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -151,6 +184,7 @@
 {#if open}
 	<div
 		class="lightbox-overlay"
+		style="background: rgba(0, 0, 0, {0.95 * overlayOpacity}); transition: {isSwiping ? 'none' : 'background 0.2s ease-out'};"
 		onclick={handleBackdropClick}
 		onkeydown={(e) => e.key === 'Escape' && onclose?.()}
 		role="dialog"
@@ -172,7 +206,7 @@
 			ontouchstart={handleTouchStart}
 			ontouchmove={handleTouchMove}
 			ontouchend={handleTouchEnd}
-			style="transform: translateX({touchDeltaX}px); transition: {isSwiping ? 'none' : 'transform 0.2s ease-out'};"
+			style="transform: translate({touchDeltaX}px, {touchDeltaY}px) scale({contentScale}); transition: {isSwiping ? 'none' : 'transform 0.2s ease-out'};"
 		>
 			{#if mediaItems.length > 1}
 				<button class="nav-button prev" onclick={prev} aria-label="Previous">
@@ -384,7 +418,7 @@
 		
 		.lightbox-content {
 			width: 100%;
-			touch-action: pan-y pinch-zoom; /* Allow vertical scroll and zoom, but handle horizontal ourselves */
+			touch-action: none; /* Disable browser handling of gestures to allow custom swipe logic */
 		}
 		
 		.lightbox-counter {

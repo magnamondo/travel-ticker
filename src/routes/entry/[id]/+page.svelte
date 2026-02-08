@@ -155,7 +155,11 @@
 				<img src={data.milestone.avatar} alt="" class="avatar" />
 			{/if}
 			<h1>{data.milestone.title}</h1>
-			<p class="description">{data.milestone.description}</p>
+			<p class="description">{@html (data.milestone.description ?? '')
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/\n/g, '<br>')}</p>
 
 			{#if data.milestone.images?.length}
 				<div class="images">
