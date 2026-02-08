@@ -12,11 +12,13 @@
 	// User menu state
 	let userMenuOpen = $state(false);
 
-	function toggleUserMenu() {
+	function toggleUserMenu(e: MouseEvent) {
+		e.preventDefault();
 		userMenuOpen = !userMenuOpen;
 	}
 
-	function closeUserMenu() {
+	function closeUserMenu(e?: MouseEvent) {
+		e?.preventDefault();
 		userMenuOpen = false;
 	}
 
@@ -265,11 +267,11 @@
 
 {#if data.user}
 	<div class="user-menu-container">
-		<button class="user-menu-trigger" onclick={toggleUserMenu} aria-label="User menu">
+		<button type="button" class="user-menu-trigger" onclick={toggleUserMenu} aria-label="User menu">
 			<span class="user-avatar">👤</span>
 		</button>
 		{#if userMenuOpen}
-			<button class="user-menu-backdrop" onclick={closeUserMenu} aria-label="Close menu"></button>
+			<button type="button" class="user-menu-backdrop" onclick={closeUserMenu} aria-label="Close menu"></button>
 			<div class="user-menu-dropdown">
 				<div class="user-menu-header">
 					<span class="user-email">{data.user.email}</span>
@@ -491,7 +493,9 @@
 	.user-menu-container {
 		position: fixed;
 		top: 1rem;
+		top: max(1rem, env(safe-area-inset-top) + 0.5rem);
 		right: 1rem;
+		right: max(1rem, env(safe-area-inset-right) + 1rem);
 		z-index: 1000;
 	}
 
@@ -507,10 +511,15 @@
 		justify-content: center;
 		transition: border-color 0.2s, box-shadow 0.2s;
 		box-shadow: var(--shadow-sm);
+		-webkit-tap-highlight-color: transparent;
+		-webkit-appearance: none;
+		appearance: none;
 	}
 
-	.user-menu-trigger:hover {
-		border-color: var(--color-primary);
+	@media (hover: hover) {
+		.user-menu-trigger:hover {
+			border-color: var(--color-primary);
+		}
 	}
 
 	.user-avatar {
@@ -528,9 +537,11 @@
 		transition: color 0.2s, transform 0.2s;
 	}
 
-	.ghost-trigger:hover .ghost-avatar {
-		color: var(--color-primary);
-		transform: scale(1.1);
+	@media (hover: hover) {
+		.ghost-trigger:hover .ghost-avatar {
+			color: var(--color-primary);
+			transform: scale(1.1);
+		}
 	}
 
 	.user-menu-backdrop {
@@ -543,6 +554,7 @@
 		background: transparent;
 		border: none;
 		cursor: default;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	.user-menu-dropdown {
@@ -555,6 +567,7 @@
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-lg);
 		overflow: hidden;
+		transform: translateZ(0); /* Fix Safari rendering issues */
 	}
 
 	.user-menu-header {

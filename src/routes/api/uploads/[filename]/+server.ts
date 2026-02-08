@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
 import { stat, realpath } from 'fs/promises';
 import { createReadStream, existsSync } from 'fs';
@@ -65,11 +66,28 @@ export const GET: RequestHandler = async ({ params }) => {
 	// Optimization: Use X-Accel-Redirect (X-Sendfile) to let Caddy serve the file.
 	// This frees up Node.js Event Loop and Memory immediately.
 	// We send '/filename' (with leading slash). Caddy will join it with the internal uploads root.
-	const redirectPath = `/${decodedFilename}`;
+	if (!dev) {
+		const redirectPath = `/${decodedFilename}`;
+		
+		return new Response(null, {
+			headers: {
+				'X-Accel-Redirect': redirectPath,
+			}
+		});
+	}
+
+	const extension = decodedFilename.split('.').pop()?.toLowerCase() || '';
+	const contentType = MIME_TYPES[extension] || 'application/octet-stream';
+	const stats = await stat(realFilePath);
 	
-	return new Response(null, {
+	const stream = createReadStream(realFilePath);
+	// @ts-ignore - Readable.toWeb matches ReadableStream but TS might complain about exact match in some envs
+	const webStream = Readable.toWeb(stream);
+	
+	return new Response(webStream as any, {
 		headers: {
-			'X-Accel-Redirect': redirectPath,
+			'Content-Type': contentType,
+			'Content-Length': stats.size.toString()
 		}
 	});
 };

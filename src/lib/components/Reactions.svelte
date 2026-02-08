@@ -73,6 +73,7 @@
 		<div class="reactions-list">
 			{#each reactions as reaction (reaction.emoji)}
 				<button
+					type="button"
 					class="reaction-badge"
 					class:user-reacted={reaction.userReacted}
 					class:interactive={isLoggedIn && canReact}
@@ -89,6 +90,7 @@
 	{#if canReact || !isLoggedIn}
 		<div class="reaction-picker-container">
 			<button
+				type="button"
 				class="add-reaction-btn"
 				onclick={(e) => { 
 					e.preventDefault(); 
@@ -121,6 +123,7 @@
 					{:else}
 						{#each availableEmojis as emoji}
 							<button
+								type="button"
 								class="emoji-option"
 								onclick={(e) => { e.preventDefault(); e.stopPropagation(); handleReaction(emoji); }}
 							>
@@ -129,6 +132,7 @@
 						{/each}
 						
 						<button
+							type="button"
 							class="emoji-option expand-btn"
 							onclick={(e) => { e.preventDefault(); e.stopPropagation(); showFullPicker = true; }}
 							title="More emojis"
@@ -213,17 +217,18 @@
 		gap: 0.25rem;
 		padding: 0 0.5rem;
 		background: transparent;
-		border: 1px dashed var(--color-border);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-full);
 		color: var(--color-text-muted);
 		cursor: pointer;
 		transition: all 0.15s;
+		-webkit-appearance: none;
+		appearance: none;
 	}
 
 	.add-reaction-btn:hover {
 		border-color: var(--color-primary);
 		color: var(--color-primary);
-		border-style: solid;
 	}
 
 	.emoji-picker {
