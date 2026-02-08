@@ -4,7 +4,41 @@ import { sequence } from '@sveltejs/kit/hooks';
 import * as auth from '$lib/server/auth';
 import { isAdmin } from '$lib/roles';
 import { logger } from '$lib/server/logger';
+import { env } from '$env/dynamic/private';
+import { building } from '$app/environment';
 
+// Validate critical environment variables at startup (skip during build)
+/*
+if (!building) {
+	const errors: string[] = [];
+
+	// ORIGIN is critical for CSRF protection
+	if (!env.ORIGIN) {
+		errors.push('ORIGIN is required. Set to your domain with protocol (e.g., https://example.com)');
+	} else if (env.ORIGIN === 'http://localhost' && env.CADDY_DOMAIN && env.CADDY_DOMAIN !== 'localhost') {
+		errors.push(
+			`ORIGIN mismatch: ORIGIN is "${env.ORIGIN}" but CADDY_DOMAIN is "${env.CADDY_DOMAIN}". ` +
+			`Set ORIGIN to "https://${env.CADDY_DOMAIN}" for production.`
+		);
+	}
+
+	// DATABASE_URL is validated in db/index.ts but warn here too for clarity
+	if (!env.DATABASE_URL) {
+		errors.push('DATABASE_URL is required. Set to path of SQLite database file.');
+	}
+
+	if (errors.length > 0) {
+		logger.error('Environment validation failed:', { errors });
+		throw new Error(`Environment validation failed:\n  - ${errors.join('\n  - ')}`);
+	}
+
+	logger.info('Environment validation passed', {
+		origin: env.ORIGIN,
+		caddyDomain: env.CADDY_DOMAIN ?? 'not set',
+		hasResendKey: !!env.RESEND_API_KEY
+	});
+}
+*/
 const handleAuth: Handle = async ({ event, resolve }) => {
 	const sessionToken = event.cookies.get(auth.sessionCookieName);
 

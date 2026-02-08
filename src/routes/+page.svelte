@@ -371,7 +371,7 @@
 									{/if}
 									<div class="card-body">
 										<h3>{milestone.title}</h3>
-									<p>{@html milestone.description
+									<p>{@html (milestone.description ?? '')
 											.replace(/&/g, '&amp;')
 											.replace(/</g, '&lt;')
 											.replace(/>/g, '&gt;')

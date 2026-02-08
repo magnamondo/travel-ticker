@@ -55,6 +55,8 @@
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		# HSTS: Enforce HTTPS for 1 year, include subdomains, allow preload list
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 	}
 
 	# Logging
