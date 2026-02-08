@@ -18,11 +18,6 @@
 }
 
 {$CADDY_DOMAIN:localhost} {
-	# Filter access logs to reduce noise (only show errors)
-	log {
-		level ERROR
-	}
-
 	# Enable compression
 	encode gzip zstd
 
@@ -72,8 +67,8 @@
 		# Serve stale content for up to 300s if backend is down
 		stale 300s
 		
-		# Exclude uploads (images/videos) from in-memory cache
-		# These are large and will fill up memory quickly
+		# Exclude all uploads (images/videos) from in-memory cache
+		# Files are served via X-Accel-Redirect/file_server which is efficient
 		regex {
 			exclude /api/uploads/.*
 		}
@@ -120,5 +115,6 @@
 	log {
 		output stdout
 		format json
+		level ERROR
 	}
 }

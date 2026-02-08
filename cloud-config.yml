@@ -47,6 +47,12 @@ packages:
 
 # Write configuration files
 write_files:
+  # Optimize UDP buffers for HTTP/3 (QUIC)
+  - path: /etc/sysctl.d/20-http3.conf
+    content: |
+      net.core.rmem_max=7500000
+      net.core.wmem_max=7500000
+
   # fail2ban SSH jail configuration
   - path: /etc/fail2ban/jail.local
     content: |

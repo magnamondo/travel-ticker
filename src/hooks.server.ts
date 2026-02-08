@@ -104,16 +104,22 @@ const handleLogging: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
 	const duration = Date.now() - start;
 
-	// Skip logging for static assets
+	// Skip logging for static assets and successful HEAD requests (healthchecks)
 	const path = event.url.pathname;
-	if (!path.startsWith('/_app/') && !path.startsWith('/favicon')) {
-		logger.request(
-			event.request.method,
-			path,
-			response.status,
-			duration,
-			{ userId: event.locals.user?.id }
-		);
+	if (!path.startsWith('/_app/') && !path.startsWith('/favicon') && !(event.request.method === 'HEAD' && response.status === 200)) {
+		// Only log 4xx and 5xx errors or slow requests (> 500ms) in production
+		const isError = response.status >= 400;
+		const isSlow = duration > 500;
+		
+		if (isError || isSlow || process.env.NODE_ENV !== 'production') {
+			logger.request(
+				event.request.method,
+				path,
+				response.status,
+				duration,
+				{ userId: event.locals.user?.id }
+			);
+		}
 	}
 
 	return response;
