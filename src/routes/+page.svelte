@@ -144,6 +144,19 @@
 	// Track updated reactions per milestone
 	let milestoneReactionsMap = new SvelteMap<number, ReactionCount[]>();
 
+	// Track expanded media grids
+	let expandedMediaIds = new SvelteMap<number, boolean>();
+
+	function toggleMediaExpanded(milestoneId: number, e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		expandedMediaIds.set(milestoneId, !expandedMediaIds.get(milestoneId));
+	}
+
+	function isMediaExpanded(milestoneId: number): boolean {
+		return expandedMediaIds.get(milestoneId) ?? false;
+	}
+
 	let milestones = $derived([...data.milestones, ...additionalMilestones]);
 	
 	function getReactions(milestone: Milestone): ReactionCount[] {
@@ -361,28 +374,44 @@
 									<p>{milestone.description}</p>
 									{#if milestone.media}
 										{@const readyMedia = milestone.media.filter(m => m.type === 'image' || m.thumbnailUrl)}
+										{@const expanded = isMediaExpanded(milestone.id)}
+										{@const maxVisible = 3}
+										{@const displayMedia = expanded ? readyMedia : readyMedia.slice(0, maxVisible)}
+										{@const hiddenCount = readyMedia.length - maxVisible}
 										{#if readyMedia.length > 0}
-										<div class="media-grid">
-											{#each readyMedia as item, i (i)}
-												{@const mediaIndex = readyMedia.slice(0, i).filter(m => m.type === 'image' || m.isReady).length}
+										<div class="media-grid" class:expanded>
+											{#each displayMedia as item, i (i)}
+												{@const mediaIndex = readyMedia.slice(0, expanded ? i : i).filter(m => m.type === 'image' || m.isReady).length}
+												{@const isLastVisible = !expanded && i === maxVisible - 1 && hiddenCount > 0}
 												{#if item.type === 'image'}
 													<button
 														class="thumbnail-button"
-														onclick={(e) => openLightbox(readyMedia, mediaIndex, e)}
-														aria-label="View image {i + 1}"
+														class:has-more-overlay={isLastVisible}
+														onclick={(e) => isLastVisible ? toggleMediaExpanded(milestone.id, e) : openLightbox(readyMedia, mediaIndex, e)}
+														aria-label={isLastVisible ? `Show ${hiddenCount} more` : `View image ${i + 1}`}
 													>
 														<img src={item.thumbnailUrl || item.url} alt="" class="thumbnail" />
+														{#if isLastVisible}
+															<div class="more-overlay">
+																<span>+{hiddenCount}</span>
+															</div>
+														{/if}
 													</button>
 												{:else}
 													<!-- Video with thumbnail ready -->
 													<button
 														class="thumbnail-button video-thumb"
-														onclick={(e) => item.isReady && openLightbox(readyMedia, mediaIndex, e)}
-														aria-label={item.isReady ? 'Play video' : 'Video processing'}
-														disabled={!item.isReady}
+														class:has-more-overlay={isLastVisible}
+														onclick={(e) => isLastVisible ? toggleMediaExpanded(milestone.id, e) : (item.isReady && openLightbox(readyMedia, mediaIndex, e))}
+														aria-label={isLastVisible ? `Show ${hiddenCount} more` : (item.isReady ? 'Play video' : 'Video processing')}
+														disabled={!isLastVisible && !item.isReady}
 													>
 														<img src={item.thumbnailUrl} alt="" class="thumbnail" />
-														{#if item.isReady}
+														{#if isLastVisible}
+															<div class="more-overlay">
+																<span>+{hiddenCount}</span>
+															</div>
+														{:else if item.isReady}
 															<div class="play-overlay">
 																<svg viewBox="0 0 24 24" fill="currentColor">
 																	<path d="M8 5v14l11-7z"/>
@@ -925,6 +954,27 @@
 		filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 	}
 
+	.more-overlay {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.6);
+		border-radius: var(--radius-sm);
+	}
+
+	.more-overlay span {
+		color: white;
+		font-size: 1.25rem;
+		font-weight: 600;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+	}
+
+	.thumbnail-button.has-more-overlay:hover .more-overlay {
+		background: rgba(0, 0, 0, 0.7);
+	}
+
 	.thumbnail {
 		width: 100%;
 		height: 100%;
@@ -1007,8 +1057,8 @@
 
 		.timeline-item.left,
 		.timeline-item.right {
-			padding-left: 48px;
-			padding-right: 0.75rem;
+			padding-left: 42px;
+			padding-right: 1rem;
 			justify-content: flex-start;
 		}
 

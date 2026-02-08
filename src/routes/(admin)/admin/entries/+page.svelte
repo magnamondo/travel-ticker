@@ -174,14 +174,9 @@
 		}
 	}
 	
-	async function handleAllUploadsComplete(milestoneId: string, results: UploadResult[]) {
-		// Handle multiple uploads completing - add all media
-		uploadingMedia = true;
-		
-		for (const result of results) {
-			await handleMilestoneUpload(milestoneId, result);
-		}
-		
+	async function handleAllUploadsComplete(_milestoneId: string, _results: UploadResult[]) {
+		// All uploads already handled individually via onUploadComplete
+		// This callback is just for UI state cleanup
 		uploadingMedia = false;
 	}
 	
