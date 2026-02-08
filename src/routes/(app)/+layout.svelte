@@ -2,8 +2,9 @@
 	import '../../app.css';
 	import { resolve } from '$app/paths';
 	import logo from '$lib/assets/favicon.svg';
+	import { isAdmin } from '$lib/roles';
 
-	let { children } = $props();
+	let { children, data } = $props();
 </script>
 
 <svelte:head>
@@ -16,6 +17,9 @@
 			<img src={logo} alt="Magnamondo" />
 		</a>
 		<nav class="header-nav">
+			{#if isAdmin(data.user?.roles)}
+				<a href={resolve("/admin")} class="nav-link">Admin</a>
+			{/if}
 			<a href={resolve("/profile")} class="nav-link">Profile</a>
 			<a href={resolve("/")} class="nav-link">← Back</a>
 		</nav>

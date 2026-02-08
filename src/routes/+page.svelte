@@ -262,14 +262,14 @@
 	<meta property="og:type" content="website">
 	<meta property="og:title" content="Toulouse - Lomé | Travel Ticker">
 	<meta property="og:description" content="Follow along on our adventure from Toulouse to Lomé">
-	<meta property="og:image" content="{data.origin}/logo.jpg">
+	<meta property="og:image" content="{data.origin}/logo.png">
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
 	<meta property="og:url" content={data.origin}>
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="Toulouse - Lomé | Travel Ticker">
 	<meta name="twitter:description" content="Follow along on our adventure from Toulouse to Lomé">
-	<meta name="twitter:image" content="{data.origin}/logo.jpg">
+	<meta name="twitter:image" content="{data.origin}/logo.png">
 </svelte:head>
 
 {#if data.user}
