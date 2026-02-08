@@ -6,7 +6,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
-	import { canReact } from '$lib/roles';
+	import { canReact, isAdmin } from '$lib/roles';
 	import { toasts } from '$lib/stores/toast.svelte';
 
 	// User menu state
@@ -296,6 +296,12 @@
 					<span class="user-email">{data.user.email}</span>
 				</div>
 				<div class="user-menu-items">
+					{#if isAdmin(data.user.roles)}
+						<a href={resolve("/admin")} class="user-menu-item" onclick={() => userMenuOpen = false}>
+							<span class="menu-icon">⚙️</span>
+							<span>Admin</span>
+						</a>
+					{/if}
 					<a href={resolve("/profile")} class="user-menu-item" onclick={() => userMenuOpen = false}>
 						<span class="menu-icon">👤</span>
 						<span>Profile</span>
