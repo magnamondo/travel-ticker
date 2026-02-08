@@ -3,12 +3,6 @@ import * as auth from '$lib/server/auth';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, locals, url, setHeaders }) => {
-	// Cache the home page for 1 hour, but allow invalidation via 'home' tag
-	setHeaders({
-		'Cache-Control': 'public, max-age=3600',
-		'Surrogate-Key': 'home'
-	});
-
 	const response = await fetch('/api/milestones?offset=0&limit=3');
 	const data = await response.json();
 
