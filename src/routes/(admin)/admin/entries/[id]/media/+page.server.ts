@@ -4,6 +4,21 @@ import { milestone, milestoneMedia } from '$lib/server/db/schema';
 import { eq, asc, and } from 'drizzle-orm';
 import { error, fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
+import { unlink } from 'fs/promises';
+import { join } from 'path';
+
+const DATA_DIR = process.env.DATA_DIR || 'data';
+const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
+
+async function deleteFileFromUrl(url: string | null): Promise<void> {
+	if (!url || !url.startsWith('/api/uploads/')) return;
+	const filename = url.replace('/api/uploads/', '');
+	try {
+		await unlink(join(UPLOADS_DIR, filename));
+	} catch {
+		// File may not exist - ignore
+	}
+}
 
 export const load: PageServerLoad = async ({ params }) => {
 	const [found] = await db.select().from(milestone).where(eq(milestone.id, params.id));
@@ -72,6 +87,17 @@ export const actions: Actions = {
 	delete: async ({ request }) => {
 		const formData = await request.formData();
 		const mediaId = formData.get('mediaId') as string;
+
+		// Fetch media record before deleting to get file URLs
+		const [media] = await db
+			.select()
+			.from(milestoneMedia)
+			.where(eq(milestoneMedia.id, mediaId));
+
+		if (media) {
+			await deleteFileFromUrl(media.url);
+			await deleteFileFromUrl(media.thumbnailUrl);
+		}
 
 		await db.delete(milestoneMedia).where(eq(milestoneMedia.id, mediaId));
 

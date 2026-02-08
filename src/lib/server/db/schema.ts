@@ -49,6 +49,7 @@ export const milestone = sqliteTable('milestone', {
 	avatar: text('avatar'),
 	meta: text('meta', { mode: 'json' }).$type<{ type: 'coordinates' | 'link' | 'icon'; value: string; label?: string; icon?: string }[]>().default([]),
 	published: integer('published', { mode: 'boolean' }).default(false).notNull(),
+	sortOrder: integer('sort_order').notNull().default(0),
 	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
 });
 

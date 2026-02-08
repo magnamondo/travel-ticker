@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { milestone, segment, milestoneMedia, reaction, videoJob, comment } from '$lib/server/db/schema';
-import { desc, eq, sql, count, and } from 'drizzle-orm';
+import { desc, eq, sql, count, and, asc } from 'drizzle-orm';
 
 type MetaItem = {
 	type: 'coordinates' | 'link' | 'icon';
@@ -62,7 +62,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		.from(milestone)
 		.innerJoin(segment, eq(milestone.segmentId, segment.id))
 		.where(eq(milestone.published, true))
-		.orderBy(desc(segment.sortOrder), desc(milestone.date))
+		.orderBy(desc(segment.sortOrder), desc(milestone.date), asc(milestone.sortOrder))
 		.limit(limit + 1) // Fetch one extra to check if there are more
 		.offset(offset);
 

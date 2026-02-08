@@ -44,7 +44,12 @@
 	let draggingMediaId = $state<string | null>(null);
 	let dragOverMediaId = $state<string | null>(null);
 
-	// Touch drag state for mobile
+	// Milestone drag state
+	let draggingMilestoneId = $state<string | null>(null);
+	let dragOverMilestoneId = $state<string | null>(null);
+	let currentDragMilestones = $state<Array<{ id: string; date: Date; sortOrder: number }>>([]);
+
+	// Touch drag state for mobile (media)
 	let touchDraggingMediaId = $state<string | null>(null);
 	let touchDragOverMediaId = $state<string | null>(null);
 	let touchStartY = $state(0);
@@ -53,6 +58,16 @@
 	let touchCloneInitialTop = $state(0);
 	let touchCurrentMilestoneMedia = $state<Array<{ id: string; sortOrder: number }>>([]);
 	let touchDragClone = $state<HTMLElement | null>(null);
+
+	// Touch drag state for milestones
+	let touchDraggingMilestoneId = $state<string | null>(null);
+	let touchDragOverMilestoneId = $state<string | null>(null);
+	let touchMilestoneStartY = $state(0);
+	let touchMilestoneStartX = $state(0);
+	let touchMilestoneCloneInitialLeft = $state(0);
+	let touchMilestoneCloneInitialTop = $state(0);
+	let touchCurrentMilestones = $state<Array<{ id: string; date: Date; sortOrder: number }>>([]);
+	let touchMilestoneDragClone = $state<HTMLElement | null>(null);
 
 	// Track edited meta per milestone
 	let milestoneMetaMap = new SvelteMap<string, MetaItem[]>();
@@ -318,16 +333,224 @@
 			touchDragClone.remove();
 			touchDragClone = null;
 		}
-		
+
 		// Perform reorder if we have a valid drop target
 		if (touchDraggingMediaId && touchDragOverMediaId && touchDraggingMediaId !== touchDragOverMediaId) {
 			await reorderMedia(touchDraggingMediaId, touchDragOverMediaId, touchCurrentMilestoneMedia);
 		}
-		
+
 		// Reset touch state
 		touchDraggingMediaId = null;
 		touchDragOverMediaId = null;
 		touchCurrentMilestoneMedia = [];
+	}
+
+	// Helper to check if two dates are the same day
+	function isSameDay(a: Date, b: Date): boolean {
+		return a.getFullYear() === b.getFullYear() &&
+			a.getMonth() === b.getMonth() &&
+			a.getDate() === b.getDate();
+	}
+
+	// Milestone drag and drop handlers
+	function handleMilestoneDragStart(e: DragEvent, milestoneId: string, milestones: Array<{ id: string; date: Date; sortOrder: number }>) {
+		draggingMilestoneId = milestoneId;
+		currentDragMilestones = milestones;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', milestoneId);
+		}
+	}
+
+	function handleMilestoneDragOver(e: DragEvent, milestoneId: string, milestoneDate: Date) {
+		e.preventDefault();
+		if (!draggingMilestoneId || draggingMilestoneId === milestoneId) return;
+
+		// Find dragging milestone date
+		const draggingMilestone = currentDragMilestones.find(m => m.id === draggingMilestoneId);
+		if (!draggingMilestone) return;
+
+		// Only allow drop on same day
+		if (isSameDay(draggingMilestone.date, milestoneDate)) {
+			dragOverMilestoneId = milestoneId;
+		}
+	}
+
+	function handleMilestoneDragLeave() {
+		dragOverMilestoneId = null;
+	}
+
+	function handleMilestoneDragEnd() {
+		draggingMilestoneId = null;
+		dragOverMilestoneId = null;
+		currentDragMilestones = [];
+	}
+
+	async function handleMilestoneDrop(e: DragEvent, targetMilestoneId: string) {
+		e.preventDefault();
+		dragOverMilestoneId = null;
+
+		if (!draggingMilestoneId || draggingMilestoneId === targetMilestoneId) {
+			draggingMilestoneId = null;
+			return;
+		}
+
+		await reorderMilestones(draggingMilestoneId, targetMilestoneId, currentDragMilestones);
+		draggingMilestoneId = null;
+		currentDragMilestones = [];
+	}
+
+	// Shared reorder logic for milestones
+	async function reorderMilestones(fromId: string, toId: string, milestones: Array<{ id: string; date: Date; sortOrder: number }>) {
+		const fromIdx = milestones.findIndex(m => m.id === fromId);
+		const toIdx = milestones.findIndex(m => m.id === toId);
+
+		if (fromIdx === -1 || toIdx === -1) return;
+
+		// Only allow same-day reordering
+		if (!isSameDay(milestones[fromIdx].date, milestones[toIdx].date)) return;
+
+		// Create new order
+		const reordered = [...milestones];
+		const [removed] = reordered.splice(fromIdx, 1);
+		reordered.splice(toIdx, 0, removed);
+
+		// Build order data - only update milestones that share the same date as the dragged item
+		const draggedDate = milestones[fromIdx].date;
+		const sameDayMilestones = reordered.filter(m => isSameDay(m.date, draggedDate));
+		const order = sameDayMilestones.map((item, index) => ({
+			id: item.id,
+			sortOrder: index
+		}));
+
+		const formData = new FormData();
+		formData.append('order', JSON.stringify(order));
+
+		try {
+			const response = await fetch('?/reorderMilestones', {
+				method: 'POST',
+				body: formData
+			});
+
+			if (response.ok) {
+				await invalidateAll();
+			}
+		} catch (err) {
+			console.error('Failed to reorder milestones:', err);
+		}
+	}
+
+	// Touch event handlers for milestone drag and drop
+	function handleMilestoneTouchStart(e: TouchEvent, milestoneId: string, milestones: Array<{ id: string; date: Date; sortOrder: number }>) {
+		const touch = e.touches[0];
+		touchMilestoneStartX = touch.clientX;
+		touchMilestoneStartY = touch.clientY;
+		touchDraggingMilestoneId = milestoneId;
+		touchCurrentMilestones = milestones;
+
+		// Find the parent milestone card to clone
+		const handle = e.currentTarget as HTMLElement;
+		const card = handle.closest('.milestone-card') as HTMLElement;
+		if (!card) return;
+
+		const clone = card.cloneNode(true) as HTMLElement;
+		const rect = card.getBoundingClientRect();
+
+		touchMilestoneCloneInitialLeft = rect.left;
+		touchMilestoneCloneInitialTop = rect.top;
+
+		clone.classList.add('touch-milestone-drag-clone');
+		clone.style.position = 'fixed';
+		clone.style.left = `${rect.left}px`;
+		clone.style.top = `${rect.top}px`;
+		clone.style.width = `${rect.width}px`;
+		clone.style.height = `${rect.height}px`;
+		clone.style.zIndex = '10000';
+		clone.style.pointerEvents = 'none';
+		clone.style.opacity = '0.9';
+		clone.style.transform = 'scale(1.02)';
+		clone.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+
+		document.body.appendChild(clone);
+		touchMilestoneDragClone = clone;
+	}
+
+	function handleMilestoneTouchMove(e: TouchEvent) {
+		if (!touchDraggingMilestoneId || !touchMilestoneDragClone) return;
+
+		e.preventDefault();
+
+		const touch = e.touches[0];
+		const deltaX = touch.clientX - touchMilestoneStartX;
+		const deltaY = touch.clientY - touchMilestoneStartY;
+
+		touchMilestoneDragClone.style.left = `${touchMilestoneCloneInitialLeft + deltaX}px`;
+		touchMilestoneDragClone.style.top = `${touchMilestoneCloneInitialTop + deltaY}px`;
+
+		// Find element under touch point
+		touchMilestoneDragClone.style.display = 'none';
+		const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+		touchMilestoneDragClone.style.display = '';
+
+		// Find the milestone-card ancestor
+		const cardBelow = elementBelow?.closest('.milestone-card') as HTMLElement | null;
+		if (cardBelow) {
+			const milestoneId = cardBelow.dataset.milestoneId;
+			const milestoneDate = cardBelow.dataset.milestoneDate;
+			if (milestoneId && milestoneId !== touchDraggingMilestoneId && milestoneDate) {
+				// Check if same day
+				const draggingMilestone = touchCurrentMilestones.find(m => m.id === touchDraggingMilestoneId);
+				if (draggingMilestone && isSameDay(draggingMilestone.date, new Date(milestoneDate))) {
+					touchDragOverMilestoneId = milestoneId;
+				} else {
+					touchDragOverMilestoneId = null;
+				}
+			} else {
+				touchDragOverMilestoneId = null;
+			}
+		} else {
+			touchDragOverMilestoneId = null;
+		}
+	}
+
+	async function handleMilestoneTouchEnd() {
+		if (touchMilestoneDragClone) {
+			touchMilestoneDragClone.remove();
+			touchMilestoneDragClone = null;
+		}
+
+		if (touchDraggingMilestoneId && touchDragOverMilestoneId && touchDraggingMilestoneId !== touchDragOverMilestoneId) {
+			await reorderMilestones(touchDraggingMilestoneId, touchDragOverMilestoneId, touchCurrentMilestones);
+		}
+
+		touchDraggingMilestoneId = null;
+		touchDragOverMilestoneId = null;
+		touchCurrentMilestones = [];
+	}
+
+	// Check if a milestone has same-day neighbors (for showing drag hint)
+	function hasSameDayNeighbors(milestoneId: string, milestones: Array<{ id: string; date: Date }>): boolean {
+		const idx = milestones.findIndex(m => m.id === milestoneId);
+		if (idx === -1) return false;
+
+		const prev = idx > 0 && isSameDay(milestones[idx].date, milestones[idx - 1].date);
+		const next = idx < milestones.length - 1 && isSameDay(milestones[idx].date, milestones[idx + 1].date);
+		return prev || next;
+	}
+
+	// Action to attach touchmove with passive: false (needed for preventDefault)
+	function nonPassiveTouchMove(node: HTMLElement, handler: (e: TouchEvent) => void) {
+		node.addEventListener('touchmove', handler, { passive: false });
+		return {
+			update(newHandler: (e: TouchEvent) => void) {
+				node.removeEventListener('touchmove', handler);
+				handler = newHandler;
+				node.addEventListener('touchmove', handler, { passive: false });
+			},
+			destroy() {
+				node.removeEventListener('touchmove', handler);
+			}
+		};
 	}
 </script>
 
@@ -397,14 +620,41 @@
 				{/if}
 				<div class="milestones">
 					{#each group.milestones as milestone (milestone.id)}
-							<div class="milestone-card" class:draft={!milestone.published} class:editing={editingMilestoneId === milestone.id}>
-								<button type="button" class="milestone-row" onclick={() => (editingMilestoneId = editingMilestoneId === milestone.id ? null : milestone.id)}>
-									<span class="published-indicator" class:published={milestone.published} title={milestone.published ? 'Published' : 'Draft'}>
-										{milestone.published ? '●' : '○'}
-									</span>
-									<span class="milestone-date">{formatDate(milestone.date)}</span>
-									<span class="milestone-title">{milestone.title}</span>
-								</button>
+							<div
+								class="milestone-card"
+								role="listitem"
+								class:draft={!milestone.published}
+								class:editing={editingMilestoneId === milestone.id}
+								class:dragging={draggingMilestoneId === milestone.id || touchDraggingMilestoneId === milestone.id}
+								class:drag-over={dragOverMilestoneId === milestone.id || touchDragOverMilestoneId === milestone.id}
+								class:draggable={hasSameDayNeighbors(milestone.id, group.milestones)}
+								data-milestone-id={milestone.id}
+								data-milestone-date={milestone.date.toISOString()}
+								draggable={hasSameDayNeighbors(milestone.id, group.milestones)}
+								ondragstart={(e) => handleMilestoneDragStart(e, milestone.id, group.milestones)}
+								ondragover={(e) => handleMilestoneDragOver(e, milestone.id, milestone.date)}
+								ondragleave={handleMilestoneDragLeave}
+								ondragend={handleMilestoneDragEnd}
+								ondrop={(e) => handleMilestoneDrop(e, milestone.id)}
+							>
+								<div class="milestone-row-wrapper">
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div
+										class="drag-handle-milestone"
+										class:disabled={!hasSameDayNeighbors(milestone.id, group.milestones)}
+										title={hasSameDayNeighbors(milestone.id, group.milestones) ? "Drag to reorder" : ""}
+										ontouchstart={(e) => hasSameDayNeighbors(milestone.id, group.milestones) && handleMilestoneTouchStart(e, milestone.id, group.milestones)}
+										use:nonPassiveTouchMove={handleMilestoneTouchMove}
+										ontouchend={handleMilestoneTouchEnd}
+									>⋮⋮</div>
+									<button type="button" class="milestone-row" onclick={() => (editingMilestoneId = editingMilestoneId === milestone.id ? null : milestone.id)}>
+										<span class="published-indicator" class:published={milestone.published} title={milestone.published ? 'Published' : 'Draft'}>
+											{milestone.published ? '●' : '○'}
+										</span>
+										<span class="milestone-date">{formatDate(milestone.date)}</span>
+										<span class="milestone-title">{milestone.title}</span>
+									</button>
+								</div>
 								{#if editingMilestoneId === milestone.id}
 									<div class="milestone-edit-panel">
 								<form id="edit-form-{milestone.id}" method="POST" action="?/updateMilestone" use:enhance={() => {
@@ -470,7 +720,7 @@
 													ondragend={handleMediaDragEnd}
 													ondrop={(e) => handleMediaDrop(e, item.id, milestone.media)}
 													ontouchstart={(e) => handleMediaTouchStart(e, item.id, milestone.media)}
-													ontouchmove={handleMediaTouchMove}
+													use:nonPassiveTouchMove={handleMediaTouchMove}
 													ontouchend={handleMediaTouchEnd}
 												>
 													<div class="drag-handle" title="Drag to reorder">⋮⋮</div>
@@ -915,6 +1165,54 @@
 		background: var(--color-bg-secondary);
 	}
 
+	.milestone-row-wrapper {
+		display: flex;
+		align-items: stretch;
+	}
+
+	.drag-handle-milestone {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 0.5rem;
+		color: var(--color-text-muted);
+		cursor: grab;
+		font-size: 0.875rem;
+		letter-spacing: -2px;
+		opacity: 0.5;
+		transition: opacity 0.15s, color 0.15s;
+		user-select: none;
+	}
+
+	.drag-handle-milestone:not(.disabled):hover {
+		opacity: 1;
+		color: var(--color-primary);
+	}
+
+	.drag-handle-milestone.disabled {
+		opacity: 0.2;
+		cursor: default;
+		pointer-events: none;
+	}
+
+	.milestone-card.draggable {
+		cursor: grab;
+	}
+
+	.milestone-card.draggable:active {
+		cursor: grabbing;
+	}
+
+	.milestone-card.dragging {
+		opacity: 0.5;
+		background: var(--color-bg-secondary);
+	}
+
+	.milestone-card.drag-over {
+		box-shadow: inset 0 0 0 2px var(--color-primary);
+		background: rgba(59, 130, 246, 0.1);
+	}
+
 	.milestone-date {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
@@ -1340,6 +1638,17 @@
 			gap: 0.5rem;
 		}
 
+		.milestone-row-wrapper {
+			flex-direction: row;
+		}
+
+		.drag-handle-milestone {
+			padding: 0.75rem;
+			font-size: 1.25rem;
+			opacity: 0.7;
+			touch-action: none;
+		}
+
 		.milestone-date {
 			min-width: auto;
 		}
@@ -1392,6 +1701,17 @@
 
 	:global(.touch-drag-clone .drag-handle),
 	:global(.touch-drag-clone .delete-media-form) {
+		display: none;
+	}
+
+	/* Global styles for milestone touch drag clone */
+	:global(.touch-milestone-drag-clone) {
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+	}
+
+	:global(.touch-milestone-drag-clone .drag-handle-milestone) {
 		display: none;
 	}
 </style>

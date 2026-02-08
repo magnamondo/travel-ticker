@@ -1,11 +1,26 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
 import { segment, milestone, milestoneMedia } from '$lib/server/db/schema';
-import { asc, eq, desc, sql, max } from 'drizzle-orm';
+import { asc, eq, desc, max } from 'drizzle-orm';
 import { fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
-import { readdir } from 'fs/promises';
+import { readdir, unlink } from 'fs/promises';
 import { join } from 'path';
+
+const DATA_DIR = process.env.DATA_DIR || 'data';
+const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
+
+// Helper to delete a file from a /api/uploads/... URL
+async function deleteFileFromUrl(url: string | null): Promise<void> {
+	if (!url || !url.startsWith('/api/uploads/')) return;
+	const filename = url.replace('/api/uploads/', '');
+	const filePath = join(UPLOADS_DIR, filename);
+	try {
+		await unlink(filePath);
+	} catch {
+		// File may not exist or already deleted - ignore
+	}
+}
 
 export const load: PageServerLoad = async () => {
 	const segments = await db.select().from(segment).orderBy(asc(segment.sortOrder));
@@ -20,10 +35,11 @@ export const load: PageServerLoad = async () => {
 			date: milestone.date,
 			avatar: milestone.avatar,
 			meta: milestone.meta,
-			published: milestone.published
+			published: milestone.published,
+			sortOrder: milestone.sortOrder
 		})
 		.from(milestone)
-		.orderBy(desc(milestone.createdAt));
+		.orderBy(desc(milestone.date), asc(milestone.sortOrder));
 
 	// Get all media (worker updates milestone_media directly with final URLs)
 	const allMedia = await db
@@ -183,6 +199,19 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const milestoneId = formData.get('milestoneId') as string;
 
+		// Fetch all media for this milestone before deleting
+		const mediaToDelete = await db
+			.select()
+			.from(milestoneMedia)
+			.where(eq(milestoneMedia.milestoneId, milestoneId));
+
+		// Delete physical files
+		for (const media of mediaToDelete) {
+			await deleteFileFromUrl(media.url);
+			await deleteFileFromUrl(media.thumbnailUrl);
+		}
+
+		// Delete milestone (cascades to media records)
 		await db.delete(milestone).where(eq(milestone.id, milestoneId));
 
 		return { success: true, message: 'Entry deleted!' };
@@ -300,6 +329,18 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const mediaId = formData.get('mediaId') as string;
 
+		// Fetch media record before deleting to get file URLs
+		const [media] = await db
+			.select()
+			.from(milestoneMedia)
+			.where(eq(milestoneMedia.id, mediaId));
+
+		if (media) {
+			// Delete physical files
+			await deleteFileFromUrl(media.url);
+			await deleteFileFromUrl(media.thumbnailUrl);
+		}
+
 		await db.delete(milestoneMedia).where(eq(milestoneMedia.id, mediaId));
 
 		return { success: true, message: 'Media deleted!' };
@@ -371,7 +412,7 @@ export const actions: Actions = {
 
 		try {
 			const order = JSON.parse(orderJson) as Array<{ id: string; sortOrder: number }>;
-			
+
 			for (const item of order) {
 				await db
 					.update(milestoneMedia)
@@ -380,6 +421,30 @@ export const actions: Actions = {
 			}
 
 			return { success: true, message: 'Media reordered!' };
+		} catch {
+			return fail(400, { error: 'Invalid order data' });
+		}
+	},
+
+	reorderMilestones: async ({ request }) => {
+		const formData = await request.formData();
+		const orderJson = formData.get('order') as string;
+
+		if (!orderJson) {
+			return fail(400, { error: 'Order data is required' });
+		}
+
+		try {
+			const order = JSON.parse(orderJson) as Array<{ id: string; sortOrder: number }>;
+
+			for (const item of order) {
+				await db
+					.update(milestone)
+					.set({ sortOrder: item.sortOrder })
+					.where(eq(milestone.id, item.id));
+			}
+
+			return { success: true, message: 'Entries reordered!' };
 		} catch {
 			return fail(400, { error: 'Invalid order data' });
 		}
