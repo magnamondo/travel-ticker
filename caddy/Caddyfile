@@ -1,0 +1,65 @@
+# Caddyfile with rate limiting for Travel Ticker
+# Uses caddy-ratelimit plugin: https://github.com/mholt/caddy-ratelimit
+
+{
+	# Global options
+	admin off
+
+	# Rate limit configuration
+	order rate_limit before basicauth
+}
+
+{$CADDY_DOMAIN:localhost} {
+	# Enable compression
+	encode gzip zstd
+
+	# Rate limiting configuration
+	# All zones are evaluated - requests must pass all matching zones
+	rate_limit {
+		# Global rate limit: 100 requests per second per IP
+		# Protects against general flooding
+		zone global {
+			key {remote_host}
+			events 100
+			window 1s
+		}
+
+		# Stricter limits for authentication endpoints
+		# 10 requests per minute per IP (prevents brute force)
+		zone auth {
+			match {
+				path /login /register /forgot-password /reset-password /verify-email
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+
+		# API endpoints: 60 requests per minute per IP
+		zone api {
+			match {
+				path /api/*
+			}
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+
+	# Reverse proxy to the application
+	reverse_proxy travel-ticker:3000
+
+	# Security headers
+	header {
+		-Server
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# Logging
+	log {
+		output stdout
+		format json
+	}
+}
