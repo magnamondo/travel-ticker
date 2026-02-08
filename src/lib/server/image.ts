@@ -132,6 +132,7 @@ function convertWithImageMagick(inputPath: string, outputPath: string): Promise<
 		const proc = spawn('convert', [
 			inputPath,
 			'-auto-orient',  // Respect EXIF orientation
+			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
 			'-interlace', 'Plane',  // Progressive JPEG
 			'-quality', '90',
 			outputPath
@@ -161,6 +162,7 @@ function convertWithFFmpeg(inputPath: string, outputPath: string): Promise<void>
 		const proc = spawn('ffmpeg', [
 			'-y',  // Overwrite output
 			'-i', inputPath,
+			'-map_metadata', '-1',  // Remove all metadata for privacy
 			'-q:v', '2',  // High quality JPEG
 			outputPath
 		]);
@@ -250,11 +252,13 @@ function generateThumbnailWithImageMagick(inputPath: string, outputPath: string)
 	return new Promise((resolve, reject) => {
 		// Use ImageMagick to create a thumbnail
 		// -thumbnail respects EXIF orientation and strips metadata for smaller files
+		// -strip explicitly removes all metadata (EXIF, GPS, etc.) for privacy
 		// Size^ means fill the box, then we crop to exact size
 		// -interlace Plane creates progressive JPEG for better perceived loading
 		const proc = spawn('convert', [
 			inputPath,
 			'-auto-orient',
+			'-strip',  // Remove all metadata for privacy
 			'-thumbnail', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}^`,
 			'-gravity', 'center',
 			'-extent', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}`,
@@ -292,6 +296,7 @@ function generateThumbnailWithFFmpeg(inputPath: string, outputPath: string): Pro
 			'-i', inputPath,
 			'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
 			'-frames:v', '1',
+			'-map_metadata', '-1',  // Remove all metadata for privacy
 			'-q:v', '2',
 			outputPath
 		]);
@@ -397,8 +402,115 @@ function needsResize(dimensions: ImageDimensions): boolean {
 }
 
 /**
+ * Strip all metadata from an image file (EXIF, GPS, etc.) for privacy
+ * Replaces the original file with the stripped version
+ */
+export async function stripImageMetadata(inputPath: string): Promise<ImageConversionResult> {
+	if (!existsSync(inputPath)) {
+		return { success: false, error: 'Input file not found' };
+	}
+
+	const imageMagickAvailable = await isImageMagickAvailable();
+	const ffmpegAvailable = await isFFmpegAvailable();
+
+	if (!imageMagickAvailable && !ffmpegAvailable) {
+		return { success: false, error: 'Neither ImageMagick nor ffmpeg available for metadata stripping' };
+	}
+
+	const dir = dirname(inputPath);
+	const ext = extname(inputPath);
+	const base = basename(inputPath, ext);
+	const tempPath = join(dir, `${base}_stripped${ext}`);
+
+	try {
+		if (imageMagickAvailable) {
+			await stripWithImageMagick(inputPath, tempPath);
+		} else {
+			await stripWithFFmpeg(inputPath, tempPath);
+		}
+
+		// Delete original and rename stripped file to take its place
+		await unlink(inputPath);
+		await rename(tempPath, inputPath);
+
+		return {
+			success: true,
+			outputPath: inputPath,
+			mimeType: getMimeTypeFromExtension(ext)
+		};
+	} catch (err) {
+		// Clean up temp file if it exists
+		try {
+			if (existsSync(tempPath)) {
+				await unlink(tempPath);
+			}
+		} catch {
+			// Ignore cleanup errors
+		}
+		return {
+			success: false,
+			error: err instanceof Error ? err.message : 'Metadata stripping failed'
+		};
+	}
+}
+
+function stripWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('convert', [
+			inputPath,
+			'-auto-orient',  // Apply orientation before stripping
+			'-strip',  // Remove all metadata
+			'-interlace', 'Plane',  // Progressive JPEG
+			'-quality', '90',
+			outputPath
+		]);
+
+		let stderr = '';
+		proc.stderr.on('data', (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error(`ImageMagick strip failed: ${stderr}`));
+			}
+		});
+	});
+}
+
+function stripWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('ffmpeg', [
+			'-y',
+			'-i', inputPath,
+			'-map_metadata', '-1',  // Remove all metadata
+			'-q:v', '2',
+			outputPath
+		]);
+
+		let stderr = '';
+		proc.stderr.on('data', (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error(`ffmpeg strip failed: ${stderr}`));
+			}
+		});
+	});
+}
+
+/**
  * Resize an image if it exceeds maximum dimensions
- * Deletes the original and replaces it with the resized version
+ * Also strips all metadata for privacy
+ * Deletes the original and replaces it with the processed version
  * Returns the path to the (possibly unchanged) image
  */
 export async function resizeImageIfNeeded(inputPath: string): Promise<ImageConversionResult> {
@@ -408,13 +520,13 @@ export async function resizeImageIfNeeded(inputPath: string): Promise<ImageConve
 
 	const dimensions = await getImageDimensions(inputPath);
 	if (!dimensions) {
-		// Can't determine dimensions, skip resize
-		return { success: true, outputPath: inputPath };
+		// Can't determine dimensions, but still strip metadata for privacy
+		return stripImageMetadata(inputPath);
 	}
 
 	if (!needsResize(dimensions)) {
-		// No resize needed
-		return { success: true, outputPath: inputPath };
+		// No resize needed, but still strip metadata for privacy
+		return stripImageMetadata(inputPath);
 	}
 
 	const imageMagickAvailable = await isImageMagickAvailable();
@@ -479,6 +591,7 @@ function resizeWithImageMagick(inputPath: string, outputPath: string, maxDimensi
 		const proc = spawn('convert', [
 			inputPath,
 			'-auto-orient',
+			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
 			'-resize', `${maxDimension}x${maxDimension}>`,  // Only shrink larger images, maintain aspect ratio
 			'-interlace', 'Plane',  // Progressive JPEG
 			'-quality', '90',
@@ -508,6 +621,7 @@ function resizeWithFFmpeg(inputPath: string, outputPath: string, maxDimension: n
 			'-y',
 			'-i', inputPath,
 			'-vf', `scale='if(gt(iw,ih),min(${maxDimension},iw),-2)':'if(gt(ih,iw),min(${maxDimension},ih),-2)'`,
+			'-map_metadata', '-1',  // Remove all metadata for privacy
 			'-q:v', '2',
 			outputPath
 		]);

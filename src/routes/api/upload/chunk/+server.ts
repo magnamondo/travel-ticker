@@ -201,15 +201,15 @@ export const PUT: RequestHandler = async ({ request }) => {
 		}
 	}
 
-	// Resize images if they exceed max dimensions (2560x1440 for 16:9, larger for other ratios)
+	// Process images: resize if needed and always strip metadata (EXIF, GPS, etc.) for privacy
 	if (isImageFile(finalMimeType)) {
 		const actualFilename = resultUrl.replace('/api/uploads/', '');
 		const imagePath = join(UPLOAD_DIR, actualFilename);
 		
 		const resizeResult = await resizeImageIfNeeded(imagePath);
 		if (!resizeResult.success) {
-			console.error('Image resize failed:', resizeResult.error);
-			// Continue with original if resize fails
+			console.error('Image processing failed:', resizeResult.error);
+			// Continue with original if processing fails
 		}
 	}
 
