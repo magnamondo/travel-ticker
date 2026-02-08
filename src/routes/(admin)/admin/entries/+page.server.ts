@@ -51,7 +51,13 @@ export const load: PageServerLoad = async () => {
 					media: mediaByMilestone.get(m.id) || []
 				}))
 		}))
-		.filter((group) => group.milestones.length > 0 || segments.length <= 5);
+		.filter((group) => group.milestones.length > 0 || segments.length <= 5)
+		// Sort segments by their most recent milestone (newest first)
+		.sort((a, b) => {
+			const aDate = a.milestones[0]?.date?.getTime() ?? 0;
+			const bDate = b.milestones[0]?.date?.getTime() ?? 0;
+			return bDate - aDate;
+		});
 
 	// Get all uploaded images for avatar picker
 	const uploadsDir = join(process.cwd(), 'data', 'uploads');

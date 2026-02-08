@@ -360,34 +360,28 @@
 										<h3>{milestone.title}</h3>
 									<p>{milestone.description}</p>
 									{#if milestone.media}
+										{@const readyMedia = milestone.media.filter(m => m.type === 'image' || m.thumbnailUrl)}
+										{#if readyMedia.length > 0}
 										<div class="media-grid">
-											{#each milestone.media as item, i (i)}
-												{@const mediaIndex = milestone.media!.slice(0, i).filter(m => m.type === 'image' || m.isReady).length}
+											{#each readyMedia as item, i (i)}
+												{@const mediaIndex = readyMedia.slice(0, i).filter(m => m.type === 'image' || m.isReady).length}
 												{#if item.type === 'image'}
 													<button
 														class="thumbnail-button"
-														onclick={(e) => openLightbox(milestone.media!, mediaIndex, e)}
+														onclick={(e) => openLightbox(readyMedia, mediaIndex, e)}
 														aria-label="View image {i + 1}"
 													>
 														<img src={item.thumbnailUrl || item.url} alt="" class="thumbnail" />
 													</button>
 												{:else}
-													<!-- Video: show thumbnail, play icon when ready -->
+													<!-- Video with thumbnail ready -->
 													<button
 														class="thumbnail-button video-thumb"
-														onclick={(e) => item.isReady && openLightbox(milestone.media!, mediaIndex, e)}
+														onclick={(e) => item.isReady && openLightbox(readyMedia, mediaIndex, e)}
 														aria-label={item.isReady ? 'Play video' : 'Video processing'}
 														disabled={!item.isReady}
 													>
-														{#if item.thumbnailUrl}
-															<img src={item.thumbnailUrl} alt="" class="thumbnail" />
-														{:else}
-															<div class="thumbnail video-placeholder">
-																<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-																	<path d="M8 5v14l11-7z"/>
-																</svg>
-															</div>
-														{/if}
+														<img src={item.thumbnailUrl} alt="" class="thumbnail" />
 														{#if item.isReady}
 															<div class="play-overlay">
 																<svg viewBox="0 0 24 24" fill="currentColor">
@@ -399,6 +393,7 @@
 												{/if}
 											{/each}
 										</div>
+										{/if}
 									{/if}
 								</div>
 							</div>
