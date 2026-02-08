@@ -64,9 +64,10 @@ export const GET: RequestHandler = async ({ params }) => {
 
 	// Optimization: Use X-Accel-Redirect (X-Sendfile) to let Caddy serve the file.
 	// This frees up Node.js Event Loop and Memory immediately.
+	// We send ONLY the filename. Caddy will join it with the internal uploads root.
 	return new Response(null, {
 		headers: {
-			'X-Accel-Redirect': `/${decodedFilename}`,
+			'X-Accel-Redirect': decodedFilename,
 			// We can still send Content-Type, though Caddy detects it too.
 			// 'Content-Type': mimeType // Optional, Caddy is good at this
 		}
