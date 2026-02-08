@@ -4,6 +4,11 @@
 {
 	# Global options
 	admin off
+	
+	# Global log level (reduces startup/module noise)
+	log {
+		level WARN
+	}
 
 	# Rate limit configuration
 	order rate_limit before basicauth
@@ -13,9 +18,9 @@
 }
 
 {$CADDY_DOMAIN:localhost} {
-	# Filter logs to reduce noise (only show warnings and errors)
+	# Filter access logs to reduce noise (only show errors)
 	log {
-		level WARN
+		level ERROR
 	}
 
 	# Enable compression
