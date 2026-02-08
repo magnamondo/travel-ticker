@@ -1052,7 +1052,7 @@
 		}
 
 		.timeline-item {
-			margin-bottom: 1rem;
+			margin-bottom: 2rem;
 		}
 
 		.timeline-item.left,
