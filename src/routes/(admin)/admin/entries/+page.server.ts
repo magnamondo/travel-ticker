@@ -331,11 +331,11 @@ export const actions: Actions = {
 			thumbnailUrl: thumbnailUrl || null,
 			caption: caption || null,
 			videoJobId: videoJobId || null,
-		await invalidateCache(['home', `entry-${milestoneId}`]);
-
 			sortOrder: maxOrder + 1,
 			createdAt: new Date()
 		});
+
+		await invalidateCache(['home', `entry-${milestoneId}`]);
 
 		return { success: true, message: 'Media added!' };
 	},
