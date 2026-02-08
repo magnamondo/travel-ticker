@@ -7,10 +7,17 @@
 
 	# Rate limit configuration
 	order rate_limit before basicauth
-	order cache before rewrite
+	# Cache ordering - placing it before reverse_proxy allows us to use 
+	# standard matchers/rewrites to protect the API if needed
+	order cache before reverse_proxy
 }
 
 {$CADDY_DOMAIN:localhost} {
+	# Filter logs to reduce noise (only show warnings and errors)
+	log {
+		level WARN
+	}
+
 	# Enable compression
 	encode gzip zstd
 
@@ -51,13 +58,17 @@
 		ttl 60s
 		# Serve stale content for up to 300s if backend is down
 		stale 300s
-        
-		# Purge configuration
-		purge {
-			# Only allow internal Docker networks to purge
-			# 172.16-31.x.x are standard Docker ranges, 10.x and 192.168.x too
-			remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+	}
+
+	# Protect Souin API (only allow internal IPs)
+	@souin_api {
+		path /souin-api/*
+	}
+	handle @souin_api {
+		@deny_external {
+			not remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/8
 		}
+		respond @deny_external 403
 	}
 
 	
