@@ -2,7 +2,8 @@
 FROM caddy:2-builder AS builder
 
 RUN xcaddy build \
-    --with github.com/mholt/caddy-ratelimit
+    --with github.com/mholt/caddy-ratelimit \
+    --with github.com/darkweak/souin/plugins/caddy
 
 # Production image
 FROM caddy:2-alpine

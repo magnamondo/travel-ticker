@@ -26,6 +26,7 @@ const db = drizzle(sqlite);
 
 // Import schema (inline to avoid SvelteKit imports)
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { invalidateCacheFromWorker } from './cache-invalidator';
 
 const videoJob = sqliteTable('video_job', {
 	id: text('id').primaryKey(),
@@ -77,10 +78,12 @@ async function updateMilestoneMedia(
 	for (let attempt = 0; attempt < MILESTONE_MEDIA_MAX_RETRIES; attempt++) {
 		const result = await db.update(milestoneMedia)
 			.set(data)
-			.where(eq(milestoneMedia.videoJobId, jobId));
+			.where(eq(milestoneMedia.videoJobId, jobId))
+			.returning({ milestoneId: milestoneMedia.milestoneId });
 		
 		// Check if any rows were updated
-		if (result.changes > 0) {
+		if (result.length > 0) {
+			invalidateCacheFromWorker(['home', `entry-${result[0].milestoneId}`]);
 			return true;
 		}
 		

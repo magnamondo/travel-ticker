@@ -6,7 +6,15 @@ import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { canComment, canReact } from '$lib/roles';
 
-export const load: PageServerLoad = async ({ params, locals, url }) => {
+import { invalidateCache } from '$lib/server/cache';
+
+export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) => {
+	// Cache the entry page for 1 hour, but allow invalidation via 'entry-[id]' tag
+	setHeaders({
+		'Cache-Control': 'public, max-age=3600',
+		'Surrogate-Key': `entry-${params.id}`
+	});
+
 	// Fetch milestone with segment
 	const milestoneResult = await db
 		.select({
@@ -203,6 +211,8 @@ export const actions: Actions = {
 			content,
 			createdAt: new Date()
 		});
+
+		await invalidateCache([`entry-${params.id}`]);
 
 		return { success: true };
 	}

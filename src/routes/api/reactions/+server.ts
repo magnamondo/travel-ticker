@@ -1,11 +1,12 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { reaction } from '$lib/server/db/schema';
+import { reaction, comment } from '$lib/server/db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { canReact } from '$lib/roles';
 import { isValidEmoji } from '$lib/emojis';
+import { invalidateCache } from '$lib/server/cache';
 
 function generateId(): string {
 	return crypto.randomUUID();
@@ -102,6 +103,21 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			commentId: targetType === 'comment' ? targetId : null,
 		};
 		await db.insert(reaction).values(newReaction);
+	}
+
+	// Invalidate cache
+	if (targetType === 'milestone') {
+		await invalidateCache([`entry-${targetId}`]);
+	} else if (targetType === 'comment') {
+		const parentComment = await db
+			.select({ milestoneId: comment.milestoneId })
+			.from(comment)
+			.where(eq(comment.id, targetId))
+			.get();
+		
+		if (parentComment?.milestoneId) {
+			await invalidateCache([`entry-${parentComment.milestoneId}`]);
+		}
 	}
 
 	// Return updated grouped reactions
