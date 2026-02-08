@@ -8,9 +8,9 @@ echo "   Database: ${DATABASE_URL:-data/db/database.db}"
 # Ensure data directories exist (db separate from uploads for security)
 mkdir -p /app/data/db /app/data/uploads
 
-# Run database migrations
+# Run database migrations (using migrate, not push, to avoid destructive changes)
 echo "📦 Running database migrations..."
-if ! npx drizzle-kit push --force; then
+if ! npx drizzle-kit migrate; then
     echo "⚠️  Migration warning (may be OK if no changes needed)"
 fi
 
