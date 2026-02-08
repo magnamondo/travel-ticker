@@ -421,7 +421,7 @@
 
 	.description {
 		font-size: 1rem;
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 		line-height: 1.6;
 		margin: 0 0 1.5rem 0;
 	}
