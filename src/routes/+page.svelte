@@ -745,7 +745,9 @@
 	.timeline-dot {
 		position: absolute;
 		left: 24px;
-		top: 50%;
+		/* Align with card-pointer: centered, but max ~214px from top for tall cards */
+		/* Add 1rem to compensate for the margin-top offset on capped value */
+		top: min(50%, calc(200px + 14px + 1rem));
 		transform: translate(-50%, -50%);
 		margin-top: -1rem; /* Offset for reactions below the card */
 		width: 12px;
@@ -786,7 +788,8 @@
 	/* Curved pointer towards timeline dot - all point left now */
 	.card-pointer {
 		position: absolute;
-		top: calc(50% - 14px); /* 28px height / 2 = 14px for perfect center */
+		/* Center vertically, but max 200px from top for tall cards */
+		top: min(calc(50% - 14px), 200px);
 		width: 16px;
 		height: 28px;
 		left: -16px;
@@ -1013,7 +1016,6 @@
 			left: 16px;
 			width: 10px;
 			height: 10px;
-			margin-top: -17px;
 		}
 
 		.timeline-dot.comment-bubble {
@@ -1051,7 +1053,7 @@
 			right: auto;
 			left: -16px;
 			transform: none;
-			top: calc(50% - 14px);
+			top: min(calc(50% - 14px), 200px);
 		}
 
 		.card-body h3 {
