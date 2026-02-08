@@ -1044,6 +1044,16 @@
 		background: var(--color-border);
 	}
 
+	/* Tablet: 769px - 1023px */
+	@media (min-width: 769px) and (max-width: 1023px) {
+		.date-divider-text {
+			/* Prevent off-screen clipping on narrow tablets */
+			left: 0;
+			transform: none;
+			margin-left: 6px;
+		}
+	}
+
 	@media (max-width: 768px) {
 		.timeline-section {
 			padding: 1.5rem 0.75rem;
