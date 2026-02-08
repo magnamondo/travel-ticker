@@ -40,11 +40,14 @@
 	$effect(() => {
 		if (open) {
 			document.body.style.overflow = 'hidden';
+			document.documentElement.style.overflow = 'hidden';
 		} else {
 			document.body.style.overflow = '';
+			document.documentElement.style.overflow = '';
 		}
 		return () => {
 			document.body.style.overflow = '';
+			document.documentElement.style.overflow = '';
 		};
 	});
 
@@ -280,6 +283,8 @@
 		justify-content: center;
 		flex-direction: column;
 		padding: 1rem;
+		overscroll-behavior: none;
+		touch-action: none;
 	}
 
 	.close-button {
