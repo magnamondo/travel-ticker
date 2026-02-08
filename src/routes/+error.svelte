@@ -2,6 +2,10 @@
 	import { page } from '$app/stores';
 </script>
 
+<svelte:head>
+	<title>Error {$page.status} | Travel Ticker</title>
+</svelte:head>
+
 <div class="error-page">
 	<div class="error-content">
 		<div class="compass">

@@ -105,10 +105,28 @@
 			userReacted: userId ? r.userIds.includes(userId) : false
 		}));
 	}
+
+	// Compute absolute OG image URL
+	const ogImageUrl = $derived.by(() => {
+		const imageUrl = data.milestone.images?.[0];
+		if (!imageUrl) return data.origin + '/logo.jpg';
+		return imageUrl.startsWith('/') ? data.origin + imageUrl : imageUrl;
+	});
 </script>
 
 <svelte:head>
 	<title>{data.milestone.title} | Toulouse - Lomé | Travel Ticker | Magnamondo</title>
+	<meta property="og:type" content="article">
+	<meta property="og:title" content="{data.milestone.title} | Travel Ticker">
+	<meta property="og:description" content={data.milestone.description?.slice(0, 160) ?? 'A moment from our journey'}>
+	<meta property="og:image" content={ogImageUrl}>
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+	<meta property="og:url" content="{data.origin}/entry/{data.milestone.id}">
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="{data.milestone.title} | Travel Ticker">
+	<meta name="twitter:description" content={data.milestone.description?.slice(0, 160) ?? 'A moment from our journey'}>
+	<meta name="twitter:image" content={ogImageUrl}>
 </svelte:head>
 
 <div class="entry-page">

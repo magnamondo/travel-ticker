@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { canComment, canReact } from '$lib/roles';
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// Fetch milestone with segment
 	const milestoneResult = await db
 		.select({
@@ -119,6 +119,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	}
 
 	return {
+		origin: url.origin,
 		milestone: {
 			id: milestoneResult.id,
 			title: milestoneResult.title,
