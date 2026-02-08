@@ -12,13 +12,20 @@
 	// User menu state
 	let userMenuOpen = $state(false);
 
-	function toggleUserMenu(e: MouseEvent) {
-		e.preventDefault();
+	function toggleUserMenu(e: Event) {
+		// On touch devices, use touchend to trigger and prevent default to avoid double-handling
+		if (e.type === 'touchend') {
+			e.preventDefault();
+		}
 		userMenuOpen = !userMenuOpen;
 	}
 
-	function closeUserMenu(e?: MouseEvent) {
-		e?.preventDefault();
+	function closeUserMenu(e?: Event) {
+		if (e?.type === 'touchend') {
+			e.preventDefault();
+		} else if (e) {
+			e.preventDefault();
+		}
 		userMenuOpen = false;
 	}
 
@@ -267,17 +274,29 @@
 
 {#if data.user}
 	<div class="user-menu-container">
-		<button type="button" class="user-menu-trigger" onclick={toggleUserMenu} aria-label="User menu">
+		<button 
+			type="button" 
+			class="user-menu-trigger" 
+			onclick={toggleUserMenu} 
+			ontouchend={toggleUserMenu}
+			aria-label="User menu"
+		>
 			<span class="user-avatar">👤</span>
 		</button>
 		{#if userMenuOpen}
-			<button type="button" class="user-menu-backdrop" onclick={closeUserMenu} aria-label="Close menu"></button>
+			<button 
+				type="button" 
+				class="user-menu-backdrop" 
+				onclick={closeUserMenu} 
+				ontouchend={closeUserMenu}
+				aria-label="Close menu"
+			></button>
 			<div class="user-menu-dropdown">
 				<div class="user-menu-header">
 					<span class="user-email">{data.user.email}</span>
 				</div>
 				<div class="user-menu-items">
-					<a href={resolve("/profile")} class="user-menu-item" onclick={closeUserMenu}>
+					<a href={resolve("/profile")} class="user-menu-item" onclick={() => userMenuOpen = false}>
 						<span class="menu-icon">👤</span>
 						<span>Profile</span>
 					</a>
@@ -405,6 +424,7 @@
 														class="thumbnail-button"
 														class:has-more-overlay={isLastVisible}
 														onclick={(e) => isLastVisible ? toggleMediaExpanded(milestone.id, e) : openLightbox(readyMedia, mediaIndex, e)}
+														ontouchstart={(e) => e.stopPropagation()}
 														aria-label={isLastVisible ? `Show ${hiddenCount} more` : `View image ${i + 1}`}
 													>
 														<img src={item.thumbnailUrl || item.url} alt="" class="thumbnail" />
@@ -420,6 +440,7 @@
 														class="thumbnail-button video-thumb"
 														class:has-more-overlay={isLastVisible}
 														onclick={(e) => isLastVisible ? toggleMediaExpanded(milestone.id, e) : (item.isReady && openLightbox(readyMedia, mediaIndex, e))}
+														ontouchstart={(e) => e.stopPropagation()}
 														aria-label={isLastVisible ? `Show ${hiddenCount} more` : (item.isReady ? 'Play video' : 'Video processing')}
 														disabled={!isLastVisible && !item.isReady}
 													>

@@ -217,6 +217,7 @@
 		gap: 0.25rem;
 		padding: 0 0.5rem;
 		background: transparent;
+		background-color: rgba(255, 255, 255, 0.05); /* Ensure tap target is filled */
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-full);
 		color: var(--color-text-muted);
