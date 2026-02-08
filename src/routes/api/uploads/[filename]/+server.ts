@@ -62,42 +62,13 @@ export const GET: RequestHandler = async ({ params }) => {
 		throw error(403, 'Access denied');
 	}
 
-	try {
-		const fileStat = await stat(filePath);
-		
-		// Determine MIME type from extension
-		const ext = filename.split('.').pop()?.toLowerCase() || '';
-		const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
-
-		// Create a Node.js read stream
-		const nodeStream = createReadStream(filePath);
-		
-		// Convert to Web ReadableStream for SvelteKit Response
-		// @ts-ignore - Readable.toWeb is available in newer Node versions or we can pass the node stream directly 
-		// if the adapter supports it, but standard Web Response expects a Web Stream or Uint8Array.
-		// SvelteKit/Node adapter often handles Node streams, but let's be spec compliant if possible.
-		// However, passing the node stream directly to `new Response` works in SvelteKit because it polyfills/handles it.
-		const stream = new ReadableStream({
-			start(controller) {
-				nodeStream.on('data', (chunk) => controller.enqueue(chunk));
-				nodeStream.on('end', () => controller.close());
-				nodeStream.on('error', (err) => controller.error(err));
-			},
-			cancel() {
-				nodeStream.destroy();
-			}
-		});
-
-		return new Response(stream, {
-			headers: {
-				'Content-Type': mimeType,
-				'Content-Length': fileStat.size.toString(),
-				'Cache-Control': 'public, max-age=31536000, immutable', // Cache for 1 year (files are immutable by UUID)
-				'Accept-Ranges': 'bytes'
-			}
-		});
-	} catch (err) {
-		console.error('Error serving file:', err);
-		throw error(500, 'Error reading file');
-	}
+	// Optimization: Use X-Accel-Redirect (X-Sendfile) to let Caddy serve the file.
+	// This frees up Node.js Event Loop and Memory immediately.
+	return new Response(null, {
+		headers: {
+			'X-Accel-Redirect': `/${decodedFilename}`,
+			// We can still send Content-Type, though Caddy detects it too.
+			// 'Content-Type': mimeType // Optional, Caddy is good at this
+		}
+	});
 };

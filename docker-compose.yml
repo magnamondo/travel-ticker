@@ -12,6 +12,9 @@ services:
     volumes:
       - caddy-data:/data
       - caddy-config:/config
+      # Mount application data volume so Caddy can serve uploads directly (X-Sendfile)
+      # Mounted as read-only (:ro) for security
+      - travel-ticker-data:/internal-data:ro
     environment:
       # Set to your domain for automatic HTTPS, or leave as localhost for HTTP
       - CADDY_DOMAIN=${CADDY_DOMAIN:-localhost}
