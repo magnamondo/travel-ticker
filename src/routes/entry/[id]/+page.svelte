@@ -277,7 +277,11 @@
 								{new Date(comment.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
 							</time>
 						</div>
-						<p class="comment-content">{comment.content}</p>
+						<p class="comment-content">{@html comment.content
+							.replace(/&/g, '&amp;')
+							.replace(/</g, '&lt;')
+							.replace(/>/g, '&gt;')
+							.replace(/\n/g, '<br>')}</p>
 						<div class="comment-reactions">
 							<Reactions
 								reactions={getCommentReactions(comment.id)}

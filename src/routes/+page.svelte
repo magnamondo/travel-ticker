@@ -371,7 +371,11 @@
 									{/if}
 									<div class="card-body">
 										<h3>{milestone.title}</h3>
-									<p>{milestone.description}</p>
+									<p>{@html milestone.description
+											.replace(/&/g, '&amp;')
+											.replace(/</g, '&lt;')
+											.replace(/>/g, '&gt;')
+											.replace(/\n/g, '<br>')}</p>
 									{#if milestone.media}
 										{@const readyMedia = milestone.media.filter(m => m.type === 'image' || m.thumbnailUrl)}
 										{@const expanded = isMediaExpanded(milestone.id)}

@@ -49,11 +49,14 @@ export const actions: Actions = {
 			return fail(400, { message: 'Phone number is too long' });
 		}
 
+		// Sanitize: strip HTML tags
+		const stripHtml = (str: string | null) => str?.replace(/<[^>]*>/g, '').trim() || null;
+
 		const profileData = {
-			title: title?.trim() || null,
-			firstName: firstName?.trim() || null,
-			lastName: lastName?.trim() || null,
-			phoneNumber: phoneNumber?.trim() || null,
+			title: stripHtml(title),
+			firstName: stripHtml(firstName),
+			lastName: stripHtml(lastName),
+			phoneNumber: stripHtml(phoneNumber),
 			dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null
 		};
 

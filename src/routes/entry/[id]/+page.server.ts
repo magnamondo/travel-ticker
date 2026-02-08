@@ -169,11 +169,18 @@ export const actions: Actions = {
 		}
 
 		const formData = await request.formData();
-		const content = formData.get('content')?.toString().trim();
+		let content = formData.get('content')?.toString().trim();
 
 		if (!content) {
 			return fail(400, { error: 'Comment is required', content: '' });
 		}
+
+		// Sanitize content:
+		// - Strip HTML tags
+		// - Limit consecutive line breaks to 2
+		content = content
+			.replace(/<[^>]*>/g, '')
+			.replace(/\n{3,}/g, '\n\n');
 
 		// Get author name from profile or email
 		const profile = await db
