@@ -62,6 +62,7 @@
 		meta?: MilestoneMeta[];
 		commentCount?: number;
 		reactions?: ReactionCount[];
+		groupNames?: string[];
 	};
 
 	// Lightbox state
@@ -401,6 +402,11 @@
 						<div class="timeline-content">
 							<a href="/entry/{milestone.id}" style="text-decoration: none; color: inherit; display: block;">
 								<div class="card">
+									{#if milestone.groupNames?.length}
+										<div class="group-badge" title={milestone.groupNames.join(', ')}>
+											🔒 {milestone.groupNames.length === 1 ? milestone.groupNames[0] : `${milestone.groupNames.length} groups`}
+										</div>
+									{/if}
 									<svg class="card-pointer" viewBox="0 0 16 28" preserveAspectRatio="none">
 										<path d="M16 0 Q 6 5 0 14 Q 6 23 16 28 Z" fill="var(--color-bg-elevated)"/>
 									</svg>
@@ -867,6 +873,23 @@
 		filter: drop-shadow(var(--shadow-sm));
 		transition: filter 0.2s ease;
 		position: relative;
+	}
+
+	.group-badge {
+		position: absolute;
+		top: 0.25rem;
+		right: 0.25rem;
+		background: rgba(0, 0, 0, 0.6);
+		color: rgba(255, 255, 255, 0.9);
+		font-size: 0.65rem;
+		padding: 0.2rem 0.5rem;
+		border-radius: var(--radius-sm);
+		box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+		white-space: nowrap;
+		max-width: 120px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		z-index: 1;
 	}
 
 	/* Curved pointer towards timeline dot - all point left now */

@@ -29,6 +29,13 @@
       "when": 1770512236103,
       "tag": "0003_rapid_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1770653323439,
+      "tag": "0004_skinny_devos",
+      "breakpoints": true
     }
   ]
 }

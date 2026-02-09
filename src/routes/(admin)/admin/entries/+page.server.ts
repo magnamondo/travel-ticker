@@ -1,7 +1,7 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
-import { segment, milestone, milestoneMedia } from '$lib/server/db/schema';
-import { asc, eq, desc, max } from 'drizzle-orm';
+import { segment, milestone, milestoneMedia, group, milestoneGroup } from '$lib/server/db/schema';
+import { asc, eq, desc, max, and, inArray } from 'drizzle-orm';
 import { fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
 import { readdir, unlink } from 'fs/promises';
@@ -68,11 +68,10 @@ export const load: PageServerLoad = async () => {
 					media: mediaByMilestone.get(m.id) || []
 				}))
 		}))
-		.filter((group) => group.milestones.length > 0 || segments.length <= 5)
-		// Sort segments by their most recent milestone (newest first)
+		// Sort segments by creation date (newest first)
 		.sort((a, b) => {
-			const aDate = a.milestones[0]?.date?.getTime() ?? 0;
-			const bDate = b.milestones[0]?.date?.getTime() ?? 0;
+			const aDate = a.segment.createdAt?.getTime() ?? 0;
+			const bDate = b.segment.createdAt?.getTime() ?? 0;
 			return bDate - aDate;
 		});
 
@@ -88,10 +87,23 @@ export const load: PageServerLoad = async () => {
 		// uploads directory may not exist yet
 	}
 
+	// Get all groups for the group picker
+	const groups = await db.select().from(group).orderBy(group.name);
+
+	// Get milestone-group assignments
+	const milestoneGroupAssignments = await db
+		.select({
+			milestoneId: milestoneGroup.milestoneId,
+			groupId: milestoneGroup.groupId
+		})
+		.from(milestoneGroup);
+
 	return {
 		segments,
 		groupedEntries,
-		availableImages
+		availableImages,
+		groups,
+		milestoneGroupAssignments
 	};
 };
 
@@ -168,6 +180,7 @@ export const actions: Actions = {
 		const dateStr = formData.get('date') as string;
 		const metaJson = formData.get('meta') as string;
 		const published = formData.get('published') === 'on';
+		const groupIdsJson = formData.get('groupIds') as string;
 
 		if (!milestoneId || !segmentId || !title || !dateStr) {
 			return fail(400, { error: 'All fields are required' });
@@ -178,6 +191,16 @@ export const actions: Actions = {
 		if (metaJson) {
 			try {
 				meta = JSON.parse(metaJson);
+			} catch {
+				// Ignore invalid JSON
+			}
+		}
+
+		// Parse group IDs
+		let groupIds: string[] = [];
+		if (groupIdsJson) {
+			try {
+				groupIds = JSON.parse(groupIdsJson);
 			} catch {
 				// Ignore invalid JSON
 			}
@@ -194,6 +217,19 @@ export const actions: Actions = {
 				published
 			})
 			.where(eq(milestone.id, milestoneId));
+
+		// Update milestone-group assignments
+		// First, delete all existing assignments for this milestone
+		await db.delete(milestoneGroup).where(eq(milestoneGroup.milestoneId, milestoneId));
+		
+		// Then, insert new assignments
+		for (const groupId of groupIds) {
+			await db.insert(milestoneGroup).values({
+				id: randomUUID(),
+				milestoneId,
+				groupId
+			});
+		}
 
 		await invalidateCache(['home', `entry-${milestoneId}`]);
 

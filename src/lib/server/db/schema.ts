@@ -30,6 +30,23 @@ export const userProfile = sqliteTable('user_profile', {
 	phoneNumber: text('phone_number')
 });
 
+// Groups for content access control
+export const group = sqliteTable('group', {
+	id: text('id').primaryKey(),
+	name: text('name').notNull().unique(),
+	description: text('description'),
+	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
+});
+
+// Many-to-many: user <-> group
+export const userGroup = sqliteTable('user_group', {
+	id: text('id').primaryKey(),
+	userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+	groupId: text('group_id').notNull().references(() => group.id, { onDelete: 'cascade' }),
+	role: text('role', { enum: ['member', 'admin'] }).default('member').notNull(),
+	joinedAt: integer('joined_at', { mode: 'timestamp' }).notNull()
+});
+
 export const segment = sqliteTable('segment', {
 	id: text('id').primaryKey(),
 	name: text('name').notNull(),
@@ -51,6 +68,13 @@ export const milestone = sqliteTable('milestone', {
 	published: integer('published', { mode: 'boolean' }).default(false).notNull(),
 	sortOrder: integer('sort_order').notNull().default(0),
 	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
+});
+
+// Many-to-many: milestone <-> group (which groups can see this milestone, when isPublic=false)
+export const milestoneGroup = sqliteTable('milestone_group', {
+	id: text('id').primaryKey(),
+	milestoneId: text('milestone_id').notNull().references(() => milestone.id, { onDelete: 'cascade' }),
+	groupId: text('group_id').notNull().references(() => group.id, { onDelete: 'cascade' })
 });
 
 export const milestoneMedia = sqliteTable('milestone_media', {
@@ -132,8 +156,11 @@ export const videoJob = sqliteTable('video_job', {
 
 export type Session = typeof session.$inferSelect;
 export type User = typeof user.$inferSelect;
+export type Group = typeof group.$inferSelect;
+export type UserGroup = typeof userGroup.$inferSelect;
 export type Segment = typeof segment.$inferSelect;
 export type Milestone = typeof milestone.$inferSelect;
+export type MilestoneGroup = typeof milestoneGroup.$inferSelect;
 export type MilestoneMedia = typeof milestoneMedia.$inferSelect;
 export type UploadSession = typeof uploadSession.$inferSelect;
 export type Comment = typeof comment.$inferSelect;

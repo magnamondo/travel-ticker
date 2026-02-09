@@ -69,16 +69,43 @@
 	let touchCurrentMilestones = $state<Array<{ id: string; date: Date; sortOrder: number }>>([]);
 	let touchMilestoneDragClone = $state<HTMLElement | null>(null);
 
+	// Group dropdown state
+	let groupDropdownOpen = $state<string | null>(null);
+
+	// Close dropdown when clicking outside
+	$effect(() => {
+		if (groupDropdownOpen) {
+			const handleClickOutside = (e: MouseEvent) => {
+				const target = e.target as HTMLElement;
+				if (!target.closest('.groups-dropdown-container')) {
+					groupDropdownOpen = null;
+				}
+			};
+			// Delay to avoid immediate close from the same click that opened it
+			setTimeout(() => {
+				document.addEventListener('click', handleClickOutside);
+			}, 0);
+			return () => {
+				document.removeEventListener('click', handleClickOutside);
+			};
+		}
+	});
+
 	// Track edited meta per milestone
 	let milestoneMetaMap = new SvelteMap<string, MetaItem[]>();
 
-	// Initialize meta when editing starts
+	// Track selected groups per milestone
+	let milestoneGroupsMap = new SvelteMap<string, string[]>();
+
+	// Initialize meta and groups when editing starts
 	$effect(() => {
 		const milestoneId = editingMilestoneId;
 		if (milestoneId) {
 			// Use untrack to prevent the map read from creating a dependency
-			const hasEntry = untrack(() => milestoneMetaMap.has(milestoneId));
-			if (!hasEntry) {
+			const hasMetaEntry = untrack(() => milestoneMetaMap.has(milestoneId));
+			const hasGroupsEntry = untrack(() => milestoneGroupsMap.has(milestoneId));
+			
+			if (!hasMetaEntry) {
 				// Find the milestone being edited (untrack data access to prevent loops on data refresh)
 				const entries = untrack(() => data.groupedEntries);
 				for (const group of entries) {
@@ -88,6 +115,15 @@
 						break;
 					}
 				}
+			}
+			
+			if (!hasGroupsEntry) {
+				// Get current group assignments for this milestone
+				const assignments = untrack(() => data.milestoneGroupAssignments);
+				const groupIds = assignments
+					.filter(a => a.milestoneId === milestoneId)
+					.map(a => a.groupId);
+				milestoneGroupsMap.set(milestoneId, groupIds);
 			}
 		}
 	});
@@ -122,6 +158,24 @@
 		// Filter out empty entries
 		const filtered = meta.filter(m => m.value.trim() !== '');
 		return JSON.stringify(filtered);
+	}
+
+	function getMilestoneGroups(milestoneId: string): string[] {
+		return milestoneGroupsMap.get(milestoneId) ?? [];
+	}
+
+	function toggleMilestoneGroup(milestoneId: string, groupId: string) {
+		const current = milestoneGroupsMap.get(milestoneId) ?? [];
+		if (current.includes(groupId)) {
+			milestoneGroupsMap.set(milestoneId, current.filter(id => id !== groupId));
+		} else {
+			milestoneGroupsMap.set(milestoneId, [...current, groupId]);
+		}
+	}
+
+	function getGroupsJson(milestoneId: string): string {
+		const groups = milestoneGroupsMap.get(milestoneId) ?? [];
+		return JSON.stringify(groups);
 	}
 
 	function autoResize(node: HTMLTextAreaElement) {
@@ -663,6 +717,7 @@
 									<input type="hidden" name="milestoneId" value={milestone.id} />
 									<input type="hidden" name="published" value={milestone.published ? 'on' : ''} />
 									<input type="hidden" name="meta" value={getMetaJson(milestone.id)} />
+									<input type="hidden" name="groupIds" value={getGroupsJson(milestone.id)} />
 									<div class="edit-form-grid">
 										<div class="form-field">
 											<label for="edit-segment-{milestone.id}">Segment</label>
@@ -817,6 +872,45 @@
 										+ Add meta
 									</button>
 								</div>
+
+								<!-- Access Groups Section -->
+								{#if data.groups.length > 0}
+									{@const selectedGroupCount = getMilestoneGroups(milestone.id).length}
+									<div class="edit-groups-section">
+										<div class="groups-dropdown-container">
+											<button 
+												type="button" 
+												class="groups-dropdown-trigger"
+												onclick={() => groupDropdownOpen = groupDropdownOpen === milestone.id ? null : milestone.id}
+											>
+												<span class="groups-label">
+													🔒 Access Groups
+													{#if selectedGroupCount > 0}
+														<span class="groups-count">({selectedGroupCount})</span>
+													{:else}
+														<span class="groups-public">(public)</span>
+													{/if}
+												</span>
+												<span class="dropdown-arrow">{groupDropdownOpen === milestone.id ? '▲' : '▼'}</span>
+											</button>
+											{#if groupDropdownOpen === milestone.id}
+												<div class="groups-dropdown-panel">
+													<p class="groups-hint">No groups = public. Add groups to restrict visibility.</p>
+													{#each data.groups as grp (grp.id)}
+														<label class="group-checkbox-label">
+															<input 
+																type="checkbox" 
+																checked={getMilestoneGroups(milestone.id).includes(grp.id)}
+																onchange={() => toggleMilestoneGroup(milestone.id, grp.id)}
+															/>
+															<span>{grp.name}</span>
+														</label>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									</div>
+								{/if}
 
 								<div class="edit-panel-footer">
 									<label class="checkbox-label">
@@ -1512,6 +1606,108 @@
 	.add-meta-btn:hover {
 		border-color: var(--color-primary);
 		color: var(--color-primary);
+	}
+
+	/* Groups section styles */
+	.edit-groups-section {
+		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.edit-groups-section h4 {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--color-text);
+		margin-bottom: 0.25rem;
+	}
+
+	.groups-hint {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		margin-bottom: 0.5rem;
+		padding: 0 0.25rem;
+	}
+
+	.groups-dropdown-container {
+		position: relative;
+	}
+
+	.groups-dropdown-trigger {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		padding: 0.5rem 0.75rem;
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		font-size: 0.875rem;
+		color: var(--color-text);
+		transition: border-color 0.15s ease;
+	}
+
+	.groups-dropdown-trigger:hover {
+		border-color: var(--color-primary);
+	}
+
+	.groups-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.groups-count {
+		color: var(--color-primary);
+		font-weight: 600;
+	}
+
+	.groups-public {
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.dropdown-arrow {
+		font-size: 0.625rem;
+		color: var(--color-text-muted);
+	}
+
+	.groups-dropdown-panel {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		margin-top: 0.25rem;
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-md);
+		padding: 0.5rem;
+		z-index: 10;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.groups-dropdown-panel .group-checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.5rem;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		font-size: 0.8125rem;
+		color: var(--color-text);
+		transition: background-color 0.1s ease;
+	}
+
+	.groups-dropdown-panel .group-checkbox-label:hover {
+		background: var(--color-bg);
+	}
+
+	.groups-dropdown-panel .group-checkbox-label input[type="checkbox"] {
+		margin: 0;
+		cursor: pointer;
 	}
 
 	.uploader-section {

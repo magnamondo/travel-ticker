@@ -1,8 +1,10 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { milestone, segment, milestoneMedia, reaction, videoJob, comment } from '$lib/server/db/schema';
-import { desc, eq, sql, count, and, asc } from 'drizzle-orm';
+import { milestone, segment, milestoneMedia, reaction, videoJob, comment, milestoneGroup, group } from '$lib/server/db/schema';
+import { desc, eq, sql, count, and, asc, inArray, notInArray } from 'drizzle-orm';
+import { getUserGroupIds } from '$lib/server/groups';
+import { isAdmin } from '$lib/roles';
 
 type MetaItem = {
 	type: 'coordinates' | 'link' | 'icon';
@@ -37,6 +39,7 @@ type MilestoneResponse = {
 	meta?: MetaItem[];
 	commentCount?: number;
 	reactions?: ReactionCount[];
+	groupNames?: string[];
 };
 
 const PAGE_SIZE = 10;
@@ -45,6 +48,53 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const offset = parseInt(url.searchParams.get('offset') || '0');
 	const limit = parseInt(url.searchParams.get('limit') || String(PAGE_SIZE));
 	const userId = locals.user?.id;
+	const userIsAdmin = isAdmin(locals.user?.roles);
+
+	// Get user's group IDs for milestone-level filtering
+	const userGroupIds = userId ? await getUserGroupIds(userId) : [];
+
+	// Get milestone IDs that have group restrictions
+	const restrictedMilestoneResults = await db
+		.select({ milestoneId: milestoneGroup.milestoneId })
+		.from(milestoneGroup);
+	const allRestrictedMilestoneIds = [...new Set(restrictedMilestoneResults.map(m => m.milestoneId))];
+
+	// Get milestone IDs user can access (restricted milestones in their groups)
+	let accessibleRestrictedIds: string[] = [];
+	if (userGroupIds.length > 0 && allRestrictedMilestoneIds.length > 0) {
+		const accessibleResults = await db
+			.select({ milestoneId: milestoneGroup.milestoneId })
+			.from(milestoneGroup)
+			.where(inArray(milestoneGroup.groupId, userGroupIds));
+		accessibleRestrictedIds = [...new Set(accessibleResults.map(m => m.milestoneId))];
+	}
+
+	// Build where clause:
+	// - Must be published
+	// - Admins see all, others only see accessible milestones
+	const baseConditions = eq(milestone.published, true);
+	
+	let accessCondition;
+	if (userIsAdmin) {
+		// Admin sees all published milestones
+		accessCondition = baseConditions;
+	} else if (allRestrictedMilestoneIds.length === 0) {
+		// No restricted milestones exist - all public
+		accessCondition = baseConditions;
+	} else if (accessibleRestrictedIds.length === 0) {
+		// User has no access to any restricted milestones - only show unrestricted
+		accessCondition = and(baseConditions, notInArray(milestone.id, allRestrictedMilestoneIds));
+	} else {
+		// User can see unrestricted OR their accessible restricted milestones
+		// Note: We need to handle this in two parts since we can't combine notInArray with inArray in OR
+		// Solution: exclude restricted milestones user doesn't have access to
+		const inaccessibleIds = allRestrictedMilestoneIds.filter(id => !accessibleRestrictedIds.includes(id));
+		if (inaccessibleIds.length === 0) {
+			accessCondition = baseConditions;
+		} else {
+			accessCondition = and(baseConditions, notInArray(milestone.id, inaccessibleIds));
+		}
+	}
 
 	// Fetch milestones with their segments
 	const milestonesWithSegments = await db
@@ -61,7 +111,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		})
 		.from(milestone)
 		.innerJoin(segment, eq(milestone.segmentId, segment.id))
-		.where(eq(milestone.published, true))
+		.where(accessCondition)
 		.orderBy(desc(segment.sortOrder), desc(milestone.date), asc(milestone.sortOrder))
 		.limit(limit + 1) // Fetch one extra to check if there are more
 		.offset(offset);
@@ -135,6 +185,39 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		return acc;
 	}, {} as Record<string, number>);
 
+	// Fetch group names for milestones (for display to users who have access)
+	let groupNamesByMilestone: Record<string, string[]> = {};
+	if (userId && milestoneIds.length > 0) {
+		// Fetch all groups assigned to these milestones
+		const milestoneGroups = await db
+			.select({
+				milestoneId: milestoneGroup.milestoneId,
+				groupName: group.name
+			})
+			.from(milestoneGroup)
+			.innerJoin(group, eq(milestoneGroup.groupId, group.id))
+			.where(sql`${milestoneGroup.milestoneId} IN ${milestoneIds}`);
+
+		// For non-admin, get user's group names to filter
+		let userGroupNames: string[] = [];
+		if (!userIsAdmin && userGroupIds.length > 0) {
+			const userGroups = await db
+				.select({ name: group.name })
+				.from(group)
+				.where(inArray(group.id, userGroupIds));
+			userGroupNames = userGroups.map(g => g.name);
+		}
+
+		groupNamesByMilestone = milestoneGroups.reduce((acc, mg) => {
+			// For admins show all, for others only groups they're in
+			if (userIsAdmin || userGroupNames.includes(mg.groupName)) {
+				if (!acc[mg.milestoneId]) acc[mg.milestoneId] = [];
+				acc[mg.milestoneId].push(mg.groupName);
+			}
+			return acc;
+		}, {} as Record<string, string[]>);
+	}
+
 	// Build response
 	const milestones: MilestoneResponse[] = milestoneList.map((m, index) => {
 		const date = new Date(m.date);
@@ -185,6 +268,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		}));
 
 		const commentCount = commentCountByMilestone[m.id] || 0;
+		const groupNames = groupNamesByMilestone[m.id];
 
 		return {
 			id: m.id,
@@ -202,7 +286,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			segmentIcon: m.segmentIcon,
 			meta: m.meta && m.meta.length > 0 ? m.meta : undefined,
 			commentCount: commentCount > 0 ? commentCount : undefined,
-			reactions: reactions.length > 0 ? reactions : undefined
+			reactions: reactions.length > 0 ? reactions : undefined,
+			groupNames: groupNames && groupNames.length > 0 ? groupNames : undefined
 		};
 	});
 

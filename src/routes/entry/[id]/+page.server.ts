@@ -5,6 +5,7 @@ import { milestone, segment, milestoneMedia, comment, reaction, userProfile } fr
 import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { canComment, canReact } from '$lib/roles';
+import { canUserAccessMilestone } from '$lib/server/groups';
 
 import { invalidateCache } from '$lib/server/cache';
 
@@ -24,8 +25,9 @@ export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) 
 			date: milestone.date,
 			avatar: milestone.avatar,
 			meta: milestone.meta,
+			segmentId: segment.id,
 			segmentName: segment.name,
-			segmentIcon: segment.icon
+			segmentIcon: segment.icon,
 		})
 		.from(milestone)
 		.innerJoin(segment, eq(milestone.segmentId, segment.id))
@@ -34,6 +36,16 @@ export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) 
 
 	if (!milestoneResult) {
 		throw error(404, 'Entry not found');
+	}
+
+	// Check if user has access to this milestone
+	const hasAccess = await canUserAccessMilestone(
+		locals.user?.id ?? null,
+		milestoneResult.id,
+		locals.user?.roles
+	);
+	if (!hasAccess) {
+		throw error(403, 'You do not have access to this entry');
 	}
 
 	// Fetch media for milestone
