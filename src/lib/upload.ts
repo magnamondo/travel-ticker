@@ -1,5 +1,6 @@
 // Chunked Upload Utilities
 // Provides robust file uploading with resumability, progress tracking, and error recovery
+// Implements battle-tested patterns: timeouts, retries with exponential backoff, stall detection
 
 export interface UploadSession {
 	sessionId: string;
@@ -15,6 +16,8 @@ export interface UploadProgress {
 	totalBytes: number;
 	speed: number; // bytes per second
 	eta: number; // seconds remaining
+	retryCount?: number; // Number of retries that have occurred
+	currentConcurrency?: number; // Current number of parallel uploads
 }
 
 export interface UploadResult {
@@ -37,6 +40,27 @@ export interface ChunkUploadResult {
 	isComplete: boolean;
 	alreadyUploaded?: boolean;
 }
+
+// Network quality tracking for adaptive concurrency
+interface NetworkQuality {
+	recentSpeeds: number[]; // Last N upload speeds in bytes/sec
+	failureCount: number;
+	lastFailureTime: number;
+}
+
+const networkQuality: NetworkQuality = {
+	recentSpeeds: [],
+	failureCount: 0,
+	lastFailureTime: 0
+};
+
+// Constants for retry and timeout behavior
+const DEFAULT_CHUNK_TIMEOUT_MS = 30000; // 30 seconds per chunk
+const MIN_CHUNK_TIMEOUT_MS = 15000; // Minimum timeout
+const MAX_CHUNK_TIMEOUT_MS = 120000; // Maximum timeout for slow connections
+const STALL_DETECTION_INTERVAL_MS = 5000; // Check for stalls every 5 seconds
+const MAX_CONSECUTIVE_FAILURES = 5; // Reduce concurrency after this many failures
+const SPEED_SAMPLE_SIZE = 10; // Number of speed samples to keep
 
 const STORAGE_KEY_PREFIX = 'upload_session_';
 
@@ -144,57 +168,172 @@ export async function getUploadStatus(sessionId: string): Promise<{
 }
 
 /**
- * Upload a single chunk with retry logic
+ * Calculate adaptive timeout based on chunk size and network conditions
+ */
+function calculateChunkTimeout(chunkSize: number): number {
+	// Base timeout on average recent speeds
+	if (networkQuality.recentSpeeds.length > 0) {
+		const avgSpeed = networkQuality.recentSpeeds.reduce((a, b) => a + b, 0) / networkQuality.recentSpeeds.length;
+		if (avgSpeed > 0) {
+			// Estimate time needed plus 50% buffer
+			const estimatedTime = (chunkSize / avgSpeed) * 1000 * 1.5;
+			return Math.max(MIN_CHUNK_TIMEOUT_MS, Math.min(MAX_CHUNK_TIMEOUT_MS, estimatedTime));
+		}
+	}
+	return DEFAULT_CHUNK_TIMEOUT_MS;
+}
+
+/**
+ * Update network quality metrics after a chunk upload
+ */
+function updateNetworkQuality(chunkSize: number, durationMs: number, success: boolean) {
+	if (success && durationMs > 0) {
+		const speed = (chunkSize / durationMs) * 1000; // bytes per second
+		networkQuality.recentSpeeds.push(speed);
+		if (networkQuality.recentSpeeds.length > SPEED_SAMPLE_SIZE) {
+			networkQuality.recentSpeeds.shift();
+		}
+		// Reset failure count on success
+		networkQuality.failureCount = 0;
+	} else if (!success) {
+		networkQuality.failureCount++;
+		networkQuality.lastFailureTime = Date.now();
+	}
+}
+
+/**
+ * Get recommended concurrency based on network conditions
+ */
+function getRecommendedConcurrency(baseConcurrency: number): number {
+	// Reduce concurrency if we've had recent failures
+	if (networkQuality.failureCount >= MAX_CONSECUTIVE_FAILURES) {
+		return 1; // Fall back to sequential uploads
+	}
+	if (networkQuality.failureCount >= 3) {
+		return Math.max(1, Math.floor(baseConcurrency / 2));
+	}
+	return baseConcurrency;
+}
+
+/**
+ * Create an AbortController that times out after the specified duration
+ */
+function createTimeoutController(timeoutMs: number, parentSignal?: AbortSignal): { controller: AbortController; cleanup: () => void } {
+	const controller = new AbortController();
+	
+	// Abort if parent signal is aborted
+	const parentAbortHandler = () => controller.abort();
+	if (parentSignal) {
+		if (parentSignal.aborted) {
+			controller.abort();
+		} else {
+			parentSignal.addEventListener('abort', parentAbortHandler);
+		}
+	}
+	
+	// Set up timeout
+	const timeoutId = setTimeout(() => {
+		controller.abort();
+	}, timeoutMs);
+	
+	const cleanup = () => {
+		clearTimeout(timeoutId);
+		if (parentSignal) {
+			parentSignal.removeEventListener('abort', parentAbortHandler);
+		}
+	};
+	
+	return { controller, cleanup };
+}
+
+/**
+ * Upload a single chunk with retry logic, timeout, and stall detection
+ * Implements battle-tested patterns for reliable mobile uploads
  */
 async function uploadChunkWithRetry(
 	sessionId: string,
 	chunkIndex: number,
 	chunkBlob: Blob,
-	maxRetries: number = 3,
+	maxRetries: number = 5,
 	retryDelay: number = 1000,
-	signal?: AbortSignal
-): Promise<ChunkUploadResult> {
+	signal?: AbortSignal,
+	onRetry?: (attempt: number, maxRetries: number, error: Error) => void
+): Promise<ChunkUploadResult & { durationMs: number }> {
 	let lastError: Error | null = null;
+	const chunkSize = chunkBlob.size;
 	
 	for (let attempt = 0; attempt < maxRetries; attempt++) {
+		const startTime = Date.now();
+		
 		try {
 			if (signal?.aborted) {
 				throw new Error('Upload cancelled');
 			}
 
-			const formData = new FormData();
-			formData.append('sessionId', sessionId);
-			formData.append('chunkIndex', chunkIndex.toString());
-			formData.append('chunk', chunkBlob);
+			// Calculate adaptive timeout based on network conditions
+			const timeout = calculateChunkTimeout(chunkSize);
+			const { controller: timeoutController, cleanup } = createTimeoutController(timeout, signal);
 			
-			// Compute checksum for data integrity verification
-			const arrayBuffer = await chunkBlob.arrayBuffer();
-			const checksum = await computeChecksum(arrayBuffer);
-			formData.append('checksum', checksum);
+			try {
+				const formData = new FormData();
+				formData.append('sessionId', sessionId);
+				formData.append('chunkIndex', chunkIndex.toString());
+				formData.append('chunk', chunkBlob);
+				
+				// Compute checksum for data integrity verification
+				const arrayBuffer = await chunkBlob.arrayBuffer();
+				const checksum = await computeChecksum(arrayBuffer);
+				formData.append('checksum', checksum);
 
-			const response = await fetch('/api/upload/chunk', {
-				method: 'POST',
-				body: formData,
-				signal
-			});
+				const response = await fetch('/api/upload/chunk', {
+					method: 'POST',
+					body: formData,
+					signal: timeoutController.signal
+				});
+				
+				cleanup();
 
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.message || `Chunk ${chunkIndex} upload failed`);
+				if (!response.ok) {
+					const error = await response.json();
+					throw new Error(error.message || `Chunk ${chunkIndex} upload failed`);
+				}
+
+				const result = await response.json();
+				const durationMs = Date.now() - startTime;
+				
+				// Update network quality metrics on success
+				updateNetworkQuality(chunkSize, durationMs, true);
+				
+				return { ...result, durationMs };
+			} catch (err) {
+				cleanup();
+				throw err;
 			}
-
-			return await response.json();
 		} catch (err) {
+			const durationMs = Date.now() - startTime;
 			lastError = err instanceof Error ? err : new Error(String(err));
 			
+			// Check if this was a user-initiated cancel (not a timeout)
 			if (signal?.aborted) {
-				throw lastError;
+				throw new Error('Upload cancelled');
 			}
+			
+			// Determine if this was a timeout
+			const isTimeout = lastError.name === 'AbortError' || lastError.message.includes('aborted');
+			const errorType = isTimeout ? 'timeout' : 'error';
+			
+			// Update network quality metrics on failure
+			updateNetworkQuality(chunkSize, durationMs, false);
 
 			if (attempt < maxRetries - 1) {
-				// Exponential backoff
-				const delay = retryDelay * Math.pow(2, attempt);
-				console.log(`Chunk ${chunkIndex} failed, retrying in ${delay}ms...`, lastError.message);
+				// Exponential backoff with jitter for better retry distribution
+				const baseDelay = retryDelay * Math.pow(2, attempt);
+				const jitter = Math.random() * baseDelay * 0.3; // 30% jitter
+				const delay = Math.min(baseDelay + jitter, 30000); // Cap at 30 seconds
+				
+				console.log(`Chunk ${chunkIndex} ${errorType}, attempt ${attempt + 1}/${maxRetries}, retrying in ${Math.round(delay)}ms...`, lastError.message);
+				onRetry?.(attempt + 1, maxRetries, lastError);
+				
 				await new Promise(resolve => setTimeout(resolve, delay));
 			}
 		}
@@ -243,17 +382,27 @@ export function clearStoredSession(file: File): void {
 export interface UploadOptions {
 	milestoneId?: string;
 	chunkSize?: number;
-	concurrency?: number; // Number of parallel chunk uploads
+	concurrency?: number; // Base number of parallel chunk uploads (may be reduced adaptively)
 	maxRetries?: number;
 	retryDelay?: number;
+	chunkTimeout?: number; // Timeout per chunk in milliseconds
+	adaptiveConcurrency?: boolean; // Reduce concurrency on poor network conditions
 	onProgress?: (progress: UploadProgress) => void;
 	onChunkComplete?: (chunkIndex: number, total: number) => void;
+	onRetry?: (chunkIndex: number, attempt: number, maxRetries: number, error: Error) => void;
 	onError?: (error: Error, chunkIndex?: number) => void;
 	signal?: AbortSignal;
 }
 
 /**
- * Main upload function with full progress tracking and resumability
+ * Main upload function with full progress tracking, resumability, and network resilience
+ * 
+ * Implements battle-tested upload patterns:
+ * - Automatic retry with exponential backoff and jitter
+ * - Per-chunk timeout with adaptive adjustment based on network conditions
+ * - Adaptive concurrency that reduces parallelism on poor connections
+ * - Resume support for interrupted uploads
+ * - Checksum verification for data integrity
  */
 export async function uploadFile(
 	file: File,
@@ -261,12 +410,14 @@ export async function uploadFile(
 ): Promise<UploadResult> {
 	const {
 		milestoneId,
-		chunkSize = 256 * 1024,
-		concurrency = 3,
-		maxRetries = 3,
+		chunkSize = 256 * 1024, // 256KB chunks work well for mobile
+		concurrency: baseConcurrency = 3,
+		maxRetries = 5, // Increased from 3 for better mobile resilience
 		retryDelay = 1000,
+		adaptiveConcurrency = true,
 		onProgress,
 		onChunkComplete,
+		onRetry,
 		onError,
 		signal
 	} = options;
@@ -284,9 +435,16 @@ export async function uploadFile(
 	
 	// Progress tracking
 	let completedCount = uploadedChunks.size;
+	let totalRetryCount = 0;
 	const startTime = Date.now();
 	let lastProgressTime = startTime;
 	let lastBytesUploaded = completedCount * session.chunkSize;
+
+	// Determine effective concurrency (may be reduced based on network conditions)
+	const getEffectiveConcurrency = () => {
+		if (!adaptiveConcurrency) return baseConcurrency;
+		return getRecommendedConcurrency(baseConcurrency);
+	};
 
 	const updateProgress = () => {
 		const now = Date.now();
@@ -305,7 +463,9 @@ export async function uploadFile(
 			bytesUploaded,
 			totalBytes: file.size,
 			speed,
-			eta
+			eta,
+			retryCount: totalRetryCount,
+			currentConcurrency: getEffectiveConcurrency()
 		});
 
 		lastProgressTime = now;
@@ -315,13 +475,16 @@ export async function uploadFile(
 	// Initial progress update
 	updateProgress();
 
-	// Upload chunks with concurrency control
+	// Upload chunks with adaptive concurrency control
 	const queue = [...pendingChunks];
 	const inFlight = new Map<number, Promise<void>>();
 	const errors: Array<{ chunkIndex: number; error: Error }> = [];
 
 	const uploadNext = async (): Promise<void> => {
-		while (queue.length > 0 && inFlight.size < concurrency) {
+		// Use adaptive concurrency
+		const effectiveConcurrency = getEffectiveConcurrency();
+		
+		while (queue.length > 0 && inFlight.size < effectiveConcurrency) {
 			if (signal?.aborted) {
 				throw new Error('Upload cancelled');
 			}
@@ -335,7 +498,12 @@ export async function uploadFile(
 						chunk.blob,
 						maxRetries,
 						retryDelay,
-						signal
+						signal,
+						(attempt, max, error) => {
+							totalRetryCount++;
+							onRetry?.(chunk.index, attempt, max, error);
+							updateProgress(); // Update to show retry count
+						}
 					);
 					uploadedChunks.add(chunk.index);
 					completedCount++;

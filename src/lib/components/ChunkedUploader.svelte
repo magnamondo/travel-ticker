@@ -203,12 +203,16 @@
 
 	let isPausing = $state(false);
 
+	// Retry tracking for user feedback
+	let retryInfo = $state<{ chunkIndex: number; attempt: number; maxRetries: number } | null>(null);
+
 	async function startUpload() {
 		if (!selectedFile) return;
 
 		uploadState = 'preparing';
 		error = null;
 		isPausing = false;
+		retryInfo = null;
 		abortController = new AbortController();
 
 		try {
@@ -222,6 +226,10 @@
 				onProgress: (p) => {
 					progress = p;
 				},
+				onRetry: (chunkIndex, attempt, maxRetries, err) => {
+					retryInfo = { chunkIndex, attempt, maxRetries };
+					console.log(`Retrying chunk ${chunkIndex}, attempt ${attempt}/${maxRetries}:`, err.message);
+				},
 				onError: (err, chunkIndex) => {
 					console.error(`Chunk ${chunkIndex} error:`, err);
 				}
@@ -229,9 +237,11 @@
 
 			uploadState = 'completed';
 			result = uploadResult;
+			retryInfo = null;
 			onUploadComplete?.(uploadResult);
 			onAllUploadsComplete?.([uploadResult]);
 		} catch (err) {
+			retryInfo = null;
 			if ((err as Error).message === 'Upload cancelled') {
 				// Check if this was a pause or a cancel
 				if (isPausing) {
@@ -333,6 +343,9 @@
 					signal: item.abortController.signal,
 					onProgress: (p) => {
 						item.progress = p;
+					},
+					onRetry: (chunkIndex, attempt, maxRetries, err) => {
+						console.log(`[${item.file.name}] Retrying chunk ${chunkIndex}, attempt ${attempt}/${maxRetries}:`, err.message);
 					},
 					onError: (err, chunkIndex) => {
 						console.error(`Chunk ${chunkIndex} error:`, err);
@@ -517,6 +530,7 @@
 						<div
 							class="progress-fill"
 							class:paused={uploadState === 'paused'}
+							class:retrying={retryInfo !== null}
 							style="width: {progressPercent}%"
 						></div>
 					</div>
@@ -530,9 +544,18 @@
 							<span class="progress-eta">ETA: {formatDuration(progress.eta)}</span>
 						{/if}
 					</div>
-					<div class="chunk-info">
-						{progress.uploadedChunks.length} chunks uploaded
-					</div>
+					{#if retryInfo}
+						<div class="retry-info">
+							🔄 Retrying chunk (attempt {retryInfo.attempt}/{retryInfo.maxRetries})...
+						</div>
+					{:else}
+						<div class="chunk-info">
+							{progress.uploadedChunks.length} chunks uploaded
+							{#if progress.retryCount && progress.retryCount > 0}
+								<span class="retry-count">({progress.retryCount} retries)</span>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/if}
 
@@ -766,6 +789,16 @@
 		background: var(--color-warning);
 	}
 
+	.progress-fill.retrying {
+		background: var(--color-warning);
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.6; }
+	}
+
 	.progress-stats {
 		display: flex;
 		flex-wrap: wrap;
@@ -783,6 +816,18 @@
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		margin-top: 0.25rem;
+	}
+
+	.retry-info {
+		font-size: 0.75rem;
+		color: var(--color-warning);
+		margin-top: 0.25rem;
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.retry-count {
+		color: var(--color-text-muted);
+		margin-left: 0.25rem;
 	}
 
 	/* Error */
