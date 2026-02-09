@@ -510,7 +510,7 @@
 				{/if}
 			</div>
 
-			{#if progress && uploadState !== 'idle'}}
+			{#if progress && uploadState !== 'idle'}
 				<!-- Progress Display -->
 				<div class="progress-container">
 					<div class="progress-bar">
