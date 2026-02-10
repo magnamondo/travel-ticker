@@ -1,6 +1,8 @@
 // Chunked Upload Utilities
 // Provides robust file uploading with resumability, progress tracking, and error recovery
-// Implements battle-tested patterns: timeouts, retries with exponential backoff, stall detection
+// Implements battle-tested patterns: timeouts, retries with exponential backoff, AIMD concurrency
+
+import { AIMDController, createAIMDController } from './upload/aimd';
 
 export interface UploadSession {
 	sessionId: string;
@@ -41,26 +43,15 @@ export interface ChunkUploadResult {
 	alreadyUploaded?: boolean;
 }
 
-// Network quality tracking for adaptive concurrency
-interface NetworkQuality {
-	recentSpeeds: number[]; // Last N upload speeds in bytes/sec
-	failureCount: number;
-	lastFailureTime: number;
-}
-
-const networkQuality: NetworkQuality = {
-	recentSpeeds: [],
-	failureCount: 0,
-	lastFailureTime: 0
-};
-
 // Constants for retry and timeout behavior
 const DEFAULT_CHUNK_TIMEOUT_MS = 30000; // 30 seconds per chunk
 const MIN_CHUNK_TIMEOUT_MS = 15000; // Minimum timeout
 const MAX_CHUNK_TIMEOUT_MS = 120000; // Maximum timeout for slow connections
 const STALL_DETECTION_INTERVAL_MS = 5000; // Check for stalls every 5 seconds
-const MAX_CONSECUTIVE_FAILURES = 5; // Reduce concurrency after this many failures
-const SPEED_SAMPLE_SIZE = 10; // Number of speed samples to keep
+const SPEED_SAMPLE_SIZE = 10; // Number of speed samples to keep for timeout calculation
+
+// Speed samples for adaptive timeout (not concurrency - that's handled by AIMD)
+let recentSpeeds: number[] = [];
 
 const STORAGE_KEY_PREFIX = 'upload_session_';
 
@@ -172,8 +163,8 @@ export async function getUploadStatus(sessionId: string): Promise<{
  */
 function calculateChunkTimeout(chunkSize: number): number {
 	// Base timeout on average recent speeds
-	if (networkQuality.recentSpeeds.length > 0) {
-		const avgSpeed = networkQuality.recentSpeeds.reduce((a, b) => a + b, 0) / networkQuality.recentSpeeds.length;
+	if (recentSpeeds.length > 0) {
+		const avgSpeed = recentSpeeds.reduce((a, b) => a + b, 0) / recentSpeeds.length;
 		if (avgSpeed > 0) {
 			// Estimate time needed plus 50% buffer
 			const estimatedTime = (chunkSize / avgSpeed) * 1000 * 1.5;
@@ -185,34 +176,16 @@ function calculateChunkTimeout(chunkSize: number): number {
 
 /**
  * Update network quality metrics after a chunk upload
+ * Note: Concurrency is now controlled by AIMD, this just tracks speed for timeout calculation
  */
-function updateNetworkQuality(chunkSize: number, durationMs: number, success: boolean) {
-	if (success && durationMs > 0) {
+function updateSpeedMetrics(chunkSize: number, durationMs: number) {
+	if (durationMs > 0) {
 		const speed = (chunkSize / durationMs) * 1000; // bytes per second
-		networkQuality.recentSpeeds.push(speed);
-		if (networkQuality.recentSpeeds.length > SPEED_SAMPLE_SIZE) {
-			networkQuality.recentSpeeds.shift();
+		recentSpeeds.push(speed);
+		if (recentSpeeds.length > SPEED_SAMPLE_SIZE) {
+			recentSpeeds.shift();
 		}
-		// Reset failure count on success
-		networkQuality.failureCount = 0;
-	} else if (!success) {
-		networkQuality.failureCount++;
-		networkQuality.lastFailureTime = Date.now();
 	}
-}
-
-/**
- * Get recommended concurrency based on network conditions
- */
-function getRecommendedConcurrency(baseConcurrency: number): number {
-	// Reduce concurrency if we've had recent failures
-	if (networkQuality.failureCount >= MAX_CONSECUTIVE_FAILURES) {
-		return 1; // Fall back to sequential uploads
-	}
-	if (networkQuality.failureCount >= 3) {
-		return Math.max(1, Math.floor(baseConcurrency / 2));
-	}
-	return baseConcurrency;
 }
 
 /**
@@ -248,7 +221,7 @@ function createTimeoutController(timeoutMs: number, parentSignal?: AbortSignal):
 
 /**
  * Upload a single chunk with retry logic, timeout, and stall detection
- * Implements battle-tested patterns for reliable mobile uploads
+ * Uses XMLHttpRequest for real-time upload progress tracking
  */
 async function uploadChunkWithRetry(
 	sessionId: string,
@@ -257,7 +230,8 @@ async function uploadChunkWithRetry(
 	maxRetries: number = 5,
 	retryDelay: number = 1000,
 	signal?: AbortSignal,
-	onRetry?: (attempt: number, maxRetries: number, error: Error) => void
+	onRetry?: (attempt: number, maxRetries: number, error: Error) => void,
+	onProgress?: (bytesSent: number, totalBytes: number) => void
 ): Promise<ChunkUploadResult & { durationMs: number }> {
 	let lastError: Error | null = null;
 	const chunkSize = chunkBlob.size;
@@ -272,43 +246,94 @@ async function uploadChunkWithRetry(
 
 			// Calculate adaptive timeout based on network conditions
 			const timeout = calculateChunkTimeout(chunkSize);
-			const { controller: timeoutController, cleanup } = createTimeoutController(timeout, signal);
 			
-			try {
+			// Compute checksum for data integrity verification
+			const arrayBuffer = await chunkBlob.arrayBuffer();
+			const checksum = await computeChecksum(arrayBuffer);
+			
+			const result = await new Promise<ChunkUploadResult>((resolve, reject) => {
+				const xhr = new XMLHttpRequest();
+				let aborted = false;
+				
+				// Set up timeout
+				const timeoutId = setTimeout(() => {
+					if (!aborted) {
+						aborted = true;
+						xhr.abort();
+						reject(new Error(`Chunk ${chunkIndex} upload timed out after ${timeout}ms`));
+					}
+				}, timeout);
+				
+				// Handle parent signal abort
+				const abortHandler = () => {
+					if (!aborted) {
+						aborted = true;
+						clearTimeout(timeoutId);
+						xhr.abort();
+						reject(new Error('Upload cancelled'));
+					}
+				};
+				signal?.addEventListener('abort', abortHandler);
+				
+				// Real-time upload progress tracking
+				xhr.upload.onprogress = (event) => {
+					if (event.lengthComputable && !aborted) {
+						onProgress?.(event.loaded, event.total);
+					}
+				};
+				
+				xhr.onload = () => {
+					clearTimeout(timeoutId);
+					signal?.removeEventListener('abort', abortHandler);
+					
+					if (xhr.status >= 200 && xhr.status < 300) {
+						try {
+							const response = JSON.parse(xhr.responseText);
+							resolve(response);
+						} catch {
+							reject(new Error(`Invalid response for chunk ${chunkIndex}`));
+						}
+					} else {
+						try {
+							const error = JSON.parse(xhr.responseText);
+							reject(new Error(error.message || `Chunk ${chunkIndex} upload failed`));
+						} catch {
+							reject(new Error(`Chunk ${chunkIndex} upload failed with status ${xhr.status}`));
+						}
+					}
+				};
+				
+				xhr.onerror = () => {
+					clearTimeout(timeoutId);
+					signal?.removeEventListener('abort', abortHandler);
+					if (!aborted) {
+						reject(new Error(`Network error uploading chunk ${chunkIndex}`));
+					}
+				};
+				
+				xhr.onabort = () => {
+					clearTimeout(timeoutId);
+					signal?.removeEventListener('abort', abortHandler);
+					// Only reject if we haven't already
+				};
+				
+				// Prepare and send
 				const formData = new FormData();
 				formData.append('sessionId', sessionId);
 				formData.append('chunkIndex', chunkIndex.toString());
 				formData.append('chunk', chunkBlob);
-				
-				// Compute checksum for data integrity verification
-				const arrayBuffer = await chunkBlob.arrayBuffer();
-				const checksum = await computeChecksum(arrayBuffer);
 				formData.append('checksum', checksum);
-
-				const response = await fetch('/api/upload/chunk', {
-					method: 'POST',
-					body: formData,
-					signal: timeoutController.signal
-				});
 				
-				cleanup();
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.message || `Chunk ${chunkIndex} upload failed`);
-				}
-
-				const result = await response.json();
-				const durationMs = Date.now() - startTime;
-				
-				// Update network quality metrics on success
-				updateNetworkQuality(chunkSize, durationMs, true);
-				
-				return { ...result, durationMs };
-			} catch (err) {
-				cleanup();
-				throw err;
-			}
+				xhr.open('POST', '/api/upload/chunk');
+				xhr.send(formData);
+			});
+			
+			const durationMs = Date.now() - startTime;
+			
+			// Update speed metrics on success (AIMD handles concurrency)
+			updateSpeedMetrics(chunkSize, durationMs);
+			
+			return { ...result, durationMs };
 		} catch (err) {
 			const durationMs = Date.now() - startTime;
 			lastError = err instanceof Error ? err : new Error(String(err));
@@ -319,11 +344,10 @@ async function uploadChunkWithRetry(
 			}
 			
 			// Determine if this was a timeout
-			const isTimeout = lastError.name === 'AbortError' || lastError.message.includes('aborted');
+			const isTimeout = lastError.message.includes('timed out') || lastError.message.includes('aborted');
 			const errorType = isTimeout ? 'timeout' : 'error';
 			
-			// Update network quality metrics on failure
-			updateNetworkQuality(chunkSize, durationMs, false);
+			// Note: AIMD controller handles concurrency on failure, no need for speed tracking here
 
 			if (attempt < maxRetries - 1) {
 				// Exponential backoff with jitter for better retry distribution
@@ -438,38 +462,73 @@ export async function uploadFile(
 	let totalRetryCount = 0;
 	const startTime = Date.now();
 	let lastProgressTime = startTime;
-	let lastBytesUploaded = completedCount * session.chunkSize;
+	let smoothedSpeed = 0; // Exponential moving average for speed
+	let lastBytesUploaded = 0; // Track bytes at last speed calculation
+	let lastBytesTime = startTime; // When we last saw byte progress
+	
+	// Track in-progress bytes for real-time progress (chunk index -> bytes sent)
+	const inProgressBytes = new Map<number, number>();
 
-	// Determine effective concurrency (may be reduced based on network conditions)
+	// Create AIMD controller for adaptive concurrency (TCP-like congestion control)
+	const aimdController = createAIMDController(baseConcurrency);
+
+	// Determine effective concurrency using AIMD controller
 	const getEffectiveConcurrency = () => {
 		if (!adaptiveConcurrency) return baseConcurrency;
-		return getRecommendedConcurrency(baseConcurrency);
+		return aimdController.currentConcurrency;
 	};
 
 	const updateProgress = () => {
 		const now = Date.now();
-		const bytesUploaded = Math.min(completedCount * session.chunkSize, file.size);
-		const elapsed = (now - startTime) / 1000;
-		const recentElapsed = (now - lastProgressTime) / 1000;
-		const recentBytes = bytesUploaded - lastBytesUploaded;
 		
-		const speed = recentElapsed > 0 ? recentBytes / recentElapsed : 0;
+		// Calculate bytes: completed chunks + in-progress bytes
+		const completedBytes = completedCount * session.chunkSize;
+		const currentInProgress = Array.from(inProgressBytes.values()).reduce((a, b) => a + b, 0);
+		const bytesUploaded = Math.min(completedBytes + currentInProgress, file.size);
+		
+		const recentElapsed = (now - lastProgressTime) / 1000;
+		
+		// Calculate instantaneous speed (only if enough time has passed)
+		if (recentElapsed >= 0.2) { // Update every 200ms minimum
+			const bytesSinceLastCalc = bytesUploaded - lastBytesUploaded;
+			const timeSinceLastCalc = (now - lastBytesTime) / 1000;
+			
+			// If bytes are making progress, calculate speed
+			if (bytesSinceLastCalc > 0) {
+				const instantSpeed = bytesSinceLastCalc / timeSinceLastCalc;
+				
+				// Use EMA for smoother speed display
+				smoothedSpeed = smoothedSpeed === 0 
+					? instantSpeed 
+					: smoothedSpeed * 0.7 + instantSpeed * 0.3;
+				
+				lastBytesUploaded = bytesUploaded;
+				lastBytesTime = now;
+			} else if (timeSinceLastCalc > 2) {
+				// No progress for 2+ seconds = stalled, decay speed rapidly
+				smoothedSpeed = smoothedSpeed * 0.5;
+				if (smoothedSpeed < 1000) smoothedSpeed = 0; // Below 1KB/s = 0
+			}
+			
+			lastProgressTime = now;
+		}
+		
 		const remaining = file.size - bytesUploaded;
-		const eta = speed > 0 ? remaining / speed : 0;
+		const eta = smoothedSpeed > 0 ? remaining / smoothedSpeed : 0;
+
+		// Use bytesUploaded for more granular progress
+		const progressPercent = (bytesUploaded / file.size) * 100;
 
 		onProgress?.({
 			uploadedChunks: Array.from(uploadedChunks),
-			progress: (completedCount / session.totalChunks) * 100,
+			progress: progressPercent,
 			bytesUploaded,
 			totalBytes: file.size,
-			speed,
+			speed: smoothedSpeed,
 			eta,
 			retryCount: totalRetryCount,
 			currentConcurrency: getEffectiveConcurrency()
 		});
-
-		lastProgressTime = now;
-		lastBytesUploaded = bytesUploaded;
 	};
 
 	// Initial progress update
@@ -490,9 +549,13 @@ export async function uploadFile(
 			}
 
 			const chunk = queue.shift()!;
+			const chunkSize = chunk.blob.size;
 			const promise = (async () => {
 				try {
-					await uploadChunkWithRetry(
+					// Initialize in-progress tracking for this chunk
+					inProgressBytes.set(chunk.index, 0);
+					
+					const result = await uploadChunkWithRetry(
 						session.sessionId,
 						chunk.index,
 						chunk.blob,
@@ -501,17 +564,43 @@ export async function uploadFile(
 						signal,
 						(attempt, max, error) => {
 							totalRetryCount++;
+							// Reset progress on retry
+							inProgressBytes.set(chunk.index, 0);
+							// Notify AIMD of retry (doesn't immediately affect concurrency)
+							aimdController.onEvent({ type: 'retry', attempt, maxAttempts: max });
 							onRetry?.(chunk.index, attempt, max, error);
-							updateProgress(); // Update to show retry count
+							updateProgress();
+						},
+						(bytesSent, _totalBytes) => {
+							// Real-time byte progress from XMLHttpRequest
+							inProgressBytes.set(chunk.index, bytesSent);
+							updateProgress();
 						}
 					);
+					
+					// Chunk complete - remove from in-progress
+					inProgressBytes.delete(chunk.index);
 					uploadedChunks.add(chunk.index);
 					completedCount++;
+					
+					// Signal success to AIMD controller for concurrency adjustment
+					aimdController.onEvent({ type: 'success', durationMs: result.durationMs, chunkSize });
+					
 					onChunkComplete?.(chunk.index, session.totalChunks);
 					updateProgress();
 				} catch (err) {
+					inProgressBytes.delete(chunk.index);
 					const error = err instanceof Error ? err : new Error(String(err));
 					errors.push({ chunkIndex: chunk.index, error });
+					
+					// Determine failure reason for AIMD
+					const isTimeout = error.message.includes('timed out');
+					const isAbort = error.message.includes('cancelled');
+					const reason = isAbort ? 'abort' : isTimeout ? 'timeout' : 'error';
+					
+					// Signal failure to AIMD controller - will reduce concurrency
+					aimdController.onEvent({ type: 'failure', reason });
+					
 					onError?.(error, chunk.index);
 				} finally {
 					inFlight.delete(chunk.index);
@@ -559,7 +648,7 @@ export function formatBytes(bytes: number): string {
  * Format seconds to human readable duration
  */
 export function formatDuration(seconds: number): string {
-	if (!isFinite(seconds) || seconds < 0) return '--';
+	if (!isFinite(seconds) || seconds <= 0) return '∞';
 	if (seconds < 60) return `${Math.round(seconds)}s`;
 	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 	return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;

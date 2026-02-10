@@ -40,7 +40,9 @@
 	let showAddMediaFor = $state<string | null>(null);
 	let uploadModeFor = $state<string | null>(null);
 	let uploadingMedia = $state(false);
+	let hasActiveUploads = $state(false); // Track if ChunkedUploader has uploads in progress
 	let uploadSuccess = $state<string | null>(null);
+	
 	let draggingMediaId = $state<string | null>(null);
 	let dragOverMediaId = $state<string | null>(null);
 
@@ -200,7 +202,7 @@
 	}
 
 	async function handleMilestoneUpload(milestoneId: string, result: UploadResult) {
-		// After upload, add the media via fetch (no page reload)
+		// After upload, add the media via fetch (no page reload yet - wait for all uploads)
 		const mediaType = result.mimeType.startsWith('video/') ? 'video' : 'image';
 		
 		const formData = new FormData();
@@ -217,21 +219,26 @@
 				body: formData
 			});
 			
-			if (response.ok) {
-				// Refresh data without closing the form
-				await invalidateAll();
-				uploadSuccess = 'Media added!';
-				setTimeout(() => { uploadSuccess = null; }, 3000);
+			if (!response.ok) {
+				console.error('Failed to add media');
 			}
+			// Don't invalidate here - wait for all uploads to complete
 		} catch (err) {
 			console.error('Failed to add media:', err);
 		}
 	}
 	
-	async function handleAllUploadsComplete(_milestoneId: string, _results: UploadResult[]) {
-		// All uploads already handled individually via onUploadComplete
-		// This callback is just for UI state cleanup
+	async function handleAllUploadsComplete(milestoneId: string, results: UploadResult[]) {
+		// Keep the uploader visible after data refresh
+		uploadModeFor = milestoneId;
+		
+		// All uploads complete - now refresh data
 		uploadingMedia = false;
+		await invalidateAll();
+		if (results.length > 0) {
+			uploadSuccess = `${results.length} file${results.length > 1 ? 's' : ''} uploaded!`;
+			setTimeout(() => { uploadSuccess = null; }, 3000);
+		}
 	}
 	
 	// Drag and drop reordering for media
@@ -687,6 +694,20 @@
 								ondrop={(e) => handleMilestoneDrop(e, milestone.id)}
 							>
 								<div class="milestone-row-wrapper">
+									<button type="button" class="milestone-row" onclick={() => {
+										if (editingMilestoneId === milestone.id && hasActiveUploads) {
+											toasts.warning('Wait for uploads to finish before closing');
+											return;
+										}
+										const isOpening = editingMilestoneId !== milestone.id;
+										editingMilestoneId = isOpening ? milestone.id : null;
+									}}>
+										<span class="published-indicator" class:published={milestone.published} title={milestone.published ? 'Published' : 'Draft'}>
+											{milestone.published ? '●' : '○'}
+										</span>
+										<span class="milestone-date">{formatDate(milestone.date)}</span>
+										<span class="milestone-title">{milestone.title}</span>
+									</button>
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<div
 										class="drag-handle-milestone"
@@ -696,13 +717,6 @@
 										use:nonPassiveTouchMove={handleMilestoneTouchMove}
 										ontouchend={handleMilestoneTouchEnd}
 									>⋮⋮</div>
-									<button type="button" class="milestone-row" onclick={() => (editingMilestoneId = editingMilestoneId === milestone.id ? null : milestone.id)}>
-										<span class="published-indicator" class:published={milestone.published} title={milestone.published ? 'Published' : 'Draft'}>
-											{milestone.published ? '●' : '○'}
-										</span>
-										<span class="milestone-date">{formatDate(milestone.date)}</span>
-										<span class="milestone-title">{milestone.title}</span>
-									</button>
 								</div>
 								{#if editingMilestoneId === milestone.id}
 									<div class="milestone-edit-panel">
@@ -710,7 +724,11 @@
 									return async ({ result, update }) => {
 										await update();
 										if (result.type === 'success') {
-											editingMilestoneId = null;
+											if (hasActiveUploads) {
+												toasts.success('Saved! Uploads still in progress...');
+											} else {
+												editingMilestoneId = null;
+											}
 										}
 									};
 								}} class="milestone-edit-form">
@@ -819,13 +837,18 @@
 												milestoneId={milestone.id}
 												accept="image/*,video/*"
 												multiple={true}
+												bind:hasActiveUploads
 												onUploadComplete={(result) => handleMilestoneUpload(milestone.id, result)}
 												onAllUploadsComplete={(results) => handleAllUploadsComplete(milestone.id, results)}
 											/>
-											<button type="button" class="btn-small-secondary" onclick={() => (uploadModeFor = null)}>Done</button>
+											<button type="button" class="btn-small-secondary" onclick={() => {
+												uploadModeFor = null;
+											}}>Done</button>
 										</div>
 									{:else}
-										<button class="add-media-btn" onclick={() => (uploadModeFor = milestone.id)}>
+										<button class="add-media-btn" onclick={() => {
+											uploadModeFor = milestone.id;
+										}}>
 											Upload files
 										</button>
 									{/if}
@@ -940,7 +963,13 @@
 												if (!confirm('Delete this entry and all its media?')) e.preventDefault();
 											}}>Delete</button>
 										</form>
-										<button type="button" class="btn-secondary" onclick={() => { editingMilestoneId = null; uploadModeFor = null; showAddMediaFor = null; }}>Cancel</button>
+										<button type="button" class="btn-secondary" onclick={() => {
+											if (hasActiveUploads) {
+												toasts.warning('Wait for uploads to finish before closing');
+												return;
+											}
+											editingMilestoneId = null; uploadModeFor = null; showAddMediaFor = null;
+										}}>Cancel</button>
 										<button type="submit" form="edit-form-{milestone.id}" class="btn-primary">Save</button>
 									</div>
 								</div>
@@ -1002,6 +1031,8 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		margin: 0;
+		padding: 0.75rem 1rem;
+		background: var(--color-bg-secondary);
 	}
 
 	.form-field {
@@ -1208,8 +1239,10 @@
 		background: var(--color-bg-secondary);
 	}
 
-	.milestone-card.editing .milestone-row {
-		background: rgba(59, 130, 246, 0.15);
+	.milestone-card.editing .milestone-row:hover,
+	.milestone-card.editing .milestone-row:focus,
+	.milestone-card.editing .milestone-row:active {
+		background: transparent;
 	}
 
 	.btn-icon-small.add {
@@ -1258,9 +1291,20 @@
 		background: var(--color-bg-secondary);
 	}
 
+	.milestone-row:focus,
+	.milestone-row:active {
+		outline: none;
+		background: transparent;
+	}
+
 	.milestone-row-wrapper {
 		display: flex;
 		align-items: stretch;
+	}
+
+	.milestone-card.editing .milestone-row-wrapper {
+		border-left: 3px solid var(--color-primary);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.drag-handle-milestone {
@@ -1268,22 +1312,22 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0 0.5rem;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 		cursor: grab;
 		font-size: 0.875rem;
+		font-weight: 700;
 		letter-spacing: -2px;
-		opacity: 0.5;
+		opacity: 0.4;
 		transition: opacity 0.15s, color 0.15s;
 		user-select: none;
+		box-shadow: inset 2px 0 4px -2px rgba(0, 0, 0, 0.45);
 	}
 
 	.drag-handle-milestone:not(.disabled):hover {
 		opacity: 1;
-		color: var(--color-primary);
 	}
 
 	.drag-handle-milestone.disabled {
-		opacity: 0.2;
 		cursor: default;
 		pointer-events: none;
 	}
@@ -1376,17 +1420,33 @@
 		font-weight: 500;
 	}
 
-	.edit-media-section {
+	/* Shared edit section styles */
+	.edit-media-section,
+	.edit-meta-section,
+	.edit-groups-section {
 		margin-top: 1rem;
-		padding: 0.75rem 1rem;
 		border-top: 1px solid var(--color-border);
 	}
 
-	.edit-media-section h4 {
+	.edit-media-section {
+		padding: 0.75rem 1rem;
+	}
+
+	.edit-meta-section,
+	.edit-groups-section {
+		padding: 1rem 1rem 0;
+	}
+
+	.edit-media-section h4,
+	.edit-meta-section h4,
+	.edit-groups-section h4 {
 		font-size: 0.875rem;
 		font-weight: 600;
-		margin-bottom: 0.75rem;
 		color: var(--color-text);
+	}
+
+	.edit-media-section h4 {
+		margin-bottom: 0.75rem;
 	}
 
 	.no-media-hint {
@@ -1397,7 +1457,7 @@
 
 	.edit-panel-footer {
 		margin-top: 1rem;
-		padding-top: 1rem;
+		padding: 1rem;
 		border-top: 1px solid var(--color-border);
 		display: flex;
 		align-items: center;
@@ -1520,32 +1580,29 @@
 		background: var(--color-error);
 	}
 
-	.add-media-btn {
-		padding: 0.5rem 1rem;
+	/* Shared add button styles */
+	.add-media-btn,
+	.add-meta-btn {
 		background: transparent;
 		border: 1px dashed var(--color-border);
-		border-radius: var(--radius-md);
 		color: var(--color-text-muted);
 		cursor: pointer;
-		font-size: 0.875rem;
 	}
 
-	.add-media-btn:hover {
+	.add-media-btn:hover,
+	.add-meta-btn:hover {
 		border-color: var(--color-primary);
 		color: var(--color-primary);
 	}
 
-	/* Meta section styles */
-	.edit-meta-section {
-		margin-top: 1rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border);
+	.add-media-btn {
+		padding: 0.5rem 1rem;
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
 	}
 
+	/* Meta section styles */
 	.edit-meta-section h4 {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--color-text);
 		margin-bottom: 0.5rem;
 	}
 
@@ -1595,30 +1652,12 @@
 
 	.add-meta-btn {
 		padding: 0.375rem 0.75rem;
-		background: transparent;
-		border: 1px dashed var(--color-border);
 		border-radius: var(--radius-sm);
-		color: var(--color-text-muted);
-		cursor: pointer;
 		font-size: 0.8125rem;
 	}
 
-	.add-meta-btn:hover {
-		border-color: var(--color-primary);
-		color: var(--color-primary);
-	}
-
 	/* Groups section styles */
-	.edit-groups-section {
-		margin-top: 1rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border);
-	}
-
 	.edit-groups-section h4 {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--color-text);
 		margin-bottom: 0.25rem;
 	}
 
@@ -1754,29 +1793,25 @@
 		min-width: 80px;
 	}
 
-	.btn-small-primary {
+	/* Shared small button styles */
+	.btn-small-primary,
+	.btn-small-secondary {
 		padding: 0.375rem 0.75rem;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		font-size: 0.8125rem;
+	}
+
+	.btn-small-primary {
 		background: var(--color-primary);
 		color: white;
 		border: none;
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.8125rem;
 	}
 
 	.btn-small-secondary {
-		padding: 0.375rem 0.75rem;
 		background: transparent;
 		color: var(--color-text-muted);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.8125rem;
-	}
-
-	.milestone-edit-form {
-		padding: 0.75rem 1rem;
-		background: var(--color-bg-secondary);
 	}
 
 	.empty-state {
@@ -1841,8 +1876,29 @@
 		.drag-handle-milestone {
 			padding: 0.75rem;
 			font-size: 1.25rem;
-			opacity: 0.7;
+			opacity: 0.6;
 			touch-action: none;
+		}
+
+		.milestone-edit-panel {
+			padding: 0;
+		}
+
+		.edit-panel-footer {
+			flex-wrap: wrap;
+			padding: 1rem 0.75rem;
+		}
+
+		.footer-buttons {
+			flex-wrap: wrap;
+			width: 100%;
+		}
+
+		.footer-buttons .btn-primary,
+		.footer-buttons .btn-secondary,
+		.footer-buttons .btn-danger {
+			flex: 1;
+			min-width: 0;
 		}
 
 		.milestone-date {
@@ -1880,6 +1936,52 @@
 		.btn-small-secondary {
 			width: 100%;
 		}
+
+		/* Mobile meta section styles */
+		.meta-row {
+			flex-wrap: wrap;
+			gap: 0.5rem;
+			padding: 0.75rem;
+			background: var(--color-bg);
+			border-radius: var(--radius-md);
+			position: relative;
+		}
+
+		.meta-row select {
+			flex: 1;
+			min-width: 100%;
+			padding: 0.5rem 0.75rem;
+			font-size: 0.9375rem;
+		}
+
+		.meta-row input {
+			min-width: 100%;
+			padding: 0.5rem 0.75rem;
+			font-size: 0.9375rem;
+		}
+
+		.meta-row .icon-field {
+			width: 100%;
+			text-align: left;
+		}
+
+		.meta-remove-btn {
+			position: absolute;
+			top: 0.5rem;
+			right: 0.5rem;
+			width: 28px;
+			height: 28px;
+			font-size: 1.125rem;
+			background: var(--color-bg-secondary);
+			opacity: 1;
+		}
+
+		.add-meta-btn {
+			width: 100%;
+			padding: 0.75rem 1rem;
+			font-size: 0.9375rem;
+			margin-top: 0.5rem;
+		}
 	}
 
 	/* Global styles for touch drag clone (appended to body) */
@@ -1908,6 +2010,6 @@
 	}
 
 	:global(.touch-milestone-drag-clone .drag-handle-milestone) {
-		display: none;
+		visibility: hidden;
 	}
 </style>

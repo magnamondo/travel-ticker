@@ -13,7 +13,7 @@
 				out:fade={{ duration: 150 }}
 			>
 				<span class="toast-icon">
-					{#if toast.type === 'success'}✓{:else if toast.type === 'error'}✕{:else}ℹ{/if}
+					{#if toast.type === 'success'}✓{:else if toast.type === 'error'}✕{:else if toast.type === 'warning'}⚠{:else}ℹ{/if}
 				</span>
 				<span class="toast-message">{toast.message}</span>
 				<button
@@ -37,6 +37,11 @@
 		gap: 0.75rem;
 		max-width: 400px;
 		width: calc(100vw - 3rem);
+		pointer-events: none;
+	}
+
+	.toast {
+		pointer-events: auto;
 	}
 
 	.toast {
@@ -48,6 +53,7 @@
 		background: var(--color-bg-elevated);
 		box-shadow: var(--shadow-lg);
 		border-left: 4px solid;
+		pointer-events: auto;
 	}
 
 	.toast-success {
@@ -60,6 +66,10 @@
 
 	.toast-info {
 		border-left-color: var(--color-primary, #3b82f6);
+	}
+
+	.toast-warning {
+		border-left-color: var(--color-warning, #f59e0b);
 	}
 
 	.toast-icon {
@@ -78,6 +88,10 @@
 
 	.toast-info .toast-icon {
 		color: var(--color-primary, #3b82f6);
+	}
+
+	.toast-warning .toast-icon {
+		color: var(--color-warning, #f59e0b);
 	}
 
 	.toast-message {

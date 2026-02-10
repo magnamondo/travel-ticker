@@ -5,10 +5,11 @@
 		url: string;
 		thumbnailUrl?: string | null;
 		videoJobId?: string | null;
+		playable?: boolean; // When true, clicking shows an inline video player
 		onJobComplete?: (result: { resultUrl: string; thumbnailUrl?: string; duration?: number }) => void;
 	}
 
-	let { url, thumbnailUrl, videoJobId, onJobComplete }: Props = $props();
+	let { url, thumbnailUrl, videoJobId, playable = false, onJobComplete }: Props = $props();
 
 	let jobStatus = $state<'pending' | 'processing' | 'completed' | 'failed' | null>(null);
 	let jobProgress = $state(0);
@@ -16,6 +17,7 @@
 	let finalThumbnailUrl = $state<string | null | undefined>(undefined);
 	let finalVideoUrl = $state<string | undefined>(undefined);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let showPlayer = $state(false);
 
 	// Update final URLs when props change
 	$effect(() => {
@@ -29,6 +31,12 @@
 	let isProcessing = $derived(jobStatus === 'pending' || jobStatus === 'processing');
 	let isReady = $derived(!videoJobId || jobStatus === 'completed');
 	let hasFailed = $derived(jobStatus === 'failed');
+
+	function handleClick() {
+		if (playable && isReady && !hasFailed) {
+			showPlayer = true;
+		}
+	}
 
 	async function pollJobStatus() {
 		if (!videoJobId) return;
@@ -93,37 +101,53 @@
 	});
 </script>
 
-<div class="video-thumbnail" class:processing={isProcessing} class:failed={hasFailed}>
-	{#if finalThumbnailUrl}
-		<img src={finalThumbnailUrl} alt="" class="thumbnail-img" />
-	{:else}
-		<div class="placeholder">
-			<span class="video-icon">🎬</span>
-		</div>
-	{/if}
+{#if showPlayer && finalVideoUrl}
+	<div class="video-player-container">
+		<!-- svelte-ignore a11y_media_has_caption -->
+		<video src={finalVideoUrl} controls autoplay class="video-player"></video>
+		<button type="button" class="close-player" onclick={() => showPlayer = false}>×</button>
+	</div>
+{:else}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div 
+		class="video-thumbnail" 
+		class:processing={isProcessing} 
+		class:failed={hasFailed}
+		class:clickable={playable && isReady && !hasFailed}
+		onclick={handleClick}
+	>
+		{#if finalThumbnailUrl}
+			<img src={finalThumbnailUrl} alt="" class="thumbnail-img" />
+		{:else}
+			<div class="placeholder">
+				<span class="video-icon">🎬</span>
+			</div>
+		{/if}
 
-	{#if isProcessing}
-		<div class="processing-overlay">
-			<div class="spinner"></div>
-			<span class="progress-text">
-				{#if jobStatus === 'pending'}
-					Queued...
-				{:else}
-					{jobProgress}%
-				{/if}
-			</span>
-		</div>
-	{:else if hasFailed}
-		<div class="error-overlay">
-			<span class="error-icon">⚠️</span>
-			<span class="error-text" title={jobError || 'Processing failed'}>Failed</span>
-		</div>
-	{:else}
-		<div class="play-overlay">
-			<span class="play-icon">▶</span>
-		</div>
-	{/if}
-</div>
+		{#if isProcessing}
+			<div class="processing-overlay">
+				<div class="spinner"></div>
+				<span class="progress-text">
+					{#if jobStatus === 'pending'}
+						Queued...
+					{:else}
+						{jobProgress}%
+					{/if}
+				</span>
+			</div>
+		{:else if hasFailed}
+			<div class="error-overlay">
+				<span class="error-icon">⚠️</span>
+				<span class="error-text" title={jobError || 'Processing failed'}>Failed</span>
+			</div>
+		{:else}
+			<div class="play-overlay">
+				<span class="play-icon">▶</span>
+			</div>
+		{/if}
+	</div>
+{/if}
 
 <style>
 	.video-thumbnail {
@@ -230,5 +254,47 @@
 
 	.video-thumbnail.processing .thumbnail-img {
 		filter: blur(2px);
+	}
+
+	.video-thumbnail.clickable {
+		cursor: pointer;
+	}
+
+	.video-player-container {
+		position: relative;
+		width: 100%;
+		max-height: 400px;
+		background: #000;
+		border-radius: var(--radius-md, 8px);
+		overflow: hidden;
+	}
+
+	.video-player {
+		width: 100%;
+		max-height: 400px;
+		display: block;
+	}
+
+	.close-player {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		background: rgba(0, 0, 0, 0.6);
+		color: white;
+		border: none;
+		font-size: 1.25rem;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		line-height: 1;
+		transition: background 0.15s;
+	}
+
+	.close-player:hover {
+		background: rgba(0, 0, 0, 0.8);
 	}
 </style>

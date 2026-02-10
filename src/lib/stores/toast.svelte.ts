@@ -1,4 +1,4 @@
-type ToastType = 'success' | 'error' | 'info';
+type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 export type Toast = {
 	id: number;
@@ -37,6 +37,10 @@ class ToastStore {
 
 	info(message: string, duration = 4000) {
 		return this.add(message, 'info', duration);
+	}
+
+	warning(message: string, duration = 5000) {
+		return this.add(message, 'warning', duration);
 	}
 }
 

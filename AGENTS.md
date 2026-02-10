@@ -21,3 +21,17 @@ You MUST use this tool whenever writing Svelte code before sending it to the use
 
 Generates a Svelte Playground link with the provided code.
 After completing the code, ask the user if they want a playground link. Only call this tool after user confirmation and NEVER if code was written to files in their project.
+
+## Implementation Guidelines
+
+When asked to build "robust", "battle-proof", or "production-ready" features, don't just implement the happy path. Think through failure modes upfront and implement patterns to handle them. This includes:
+- Validating inputs and API responses
+- Implementing retries with backoff for transient failures
+- Providing clear error messages and recovery options for users
+- Logging errors for monitoring and debugging
+### General robustness patterns:
+- Verify API assumptions. Don't assume APIs will always return expected data or succeed.
+- Think about what happens when: network drops, user closes tab, server times out, partial success
+- Consider UX during failures: what does the user see? can they recover?
+- Test your mental model before writing code - trace the data flow
+- Ask about specific failure scenarios if requirements are vague
