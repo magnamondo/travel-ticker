@@ -32,7 +32,7 @@
 			{#if $page.status === 404}
 				Lost in Transit
 			{:else if $page.status === 500}
-				Unexpected Turbulence
+				Unexpected Bumps
 			{:else}
 				Off the Map
 			{/if}

@@ -106,6 +106,17 @@
 		}));
 	}
 
+	// Combine images and videos into a single media array for lightbox
+	type MediaItem = { type: 'image' | 'video'; url: string; thumbnailUrl?: string };
+	const mediaItems = $derived<MediaItem[]>([
+		...(data.milestone.images ?? []).map((url: string) => ({ type: 'image' as const, url })),
+		...(data.milestone.videos ?? []).map((v) => ({
+			type: 'video' as const,
+			url: v.url,
+			thumbnailUrl: v.thumbnailUrl ?? undefined
+		}))
+	]);
+
 	// Compute absolute OG image URL
 	const ogImageUrl = $derived.by(() => {
 		const imageUrl = data.milestone.images?.[0];
@@ -161,15 +172,30 @@
 				.replace(/>/g, '&gt;')
 				.replace(/\n/g, '<br>')}</p>
 
-			{#if data.milestone.images?.length}
-				<div class="images">
-					{#each data.milestone.images as image, i (i)}
+			{#if mediaItems.length > 0}
+				<div class="media-grid">
+					{#each mediaItems as item, i (i)}
 						<button
-							class="image-button"
+							class="media-button"
 							onclick={() => openLightbox(i)}
-							aria-label="View image {i + 1} fullscreen"
+							aria-label="View {item.type} {i + 1} fullscreen"
 						>
-							<img src={image} alt="" class="entry-image" />
+							{#if item.type === 'video'}
+								<div class="video-thumbnail">
+									{#if item.thumbnailUrl}
+										<img src={item.thumbnailUrl} alt="" class="entry-media" />
+									{:else}
+										<div class="video-placeholder"></div>
+									{/if}
+									<div class="play-icon">
+										<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="white">
+											<path d="M8 5v14l11-7z"/>
+										</svg>
+									</div>
+								</div>
+							{:else}
+								<img src={item.url} alt="" class="entry-media" />
+							{/if}
 						</button>
 					{/each}
 				</div>
@@ -323,9 +349,9 @@
 	</section>
 </div>
 
-{#if data.milestone.images?.length}
+{#if mediaItems.length > 0}
 	<ImageLightbox
-		images={data.milestone.images}
+		media={mediaItems}
 		currentIndex={lightboxIndex}
 		open={lightboxOpen}
 		onclose={closeLightbox}
@@ -426,14 +452,14 @@
 		margin: 0 0 1.5rem 0;
 	}
 
-	.images {
+	.media-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 		gap: 1rem;
 		margin-bottom: 1.5rem;
 	}
 
-	.image-button {
+	.media-button {
 		padding: 0;
 		border: none;
 		background: none;
@@ -443,17 +469,52 @@
 		transition: transform 0.2s, box-shadow 0.2s;
 	}
 
-	.image-button:hover {
+	.media-button:hover {
 		transform: scale(1.02);
 		box-shadow: var(--shadow-lg);
 	}
 
-	.entry-image {
+	.entry-media {
 		width: 100%;
 		border-radius: var(--radius-md);
 		object-fit: cover;
 		aspect-ratio: 4/3;
 		display: block;
+	}
+
+	.video-thumbnail {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 4/3;
+		background: var(--color-bg-secondary);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.video-placeholder {
+		width: 100%;
+		height: 100%;
+		background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary, #333) 100%);
+	}
+
+	.play-icon {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 64px;
+		height: 64px;
+		background: rgba(0, 0, 0, 0.6);
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: background 0.2s;
+	}
+
+	.media-button:hover .play-icon {
+		background: rgba(0, 0, 0, 0.8);
 	}
 
 	.meta {
@@ -691,7 +752,7 @@
 			font-size: 1.25rem;
 		}
 
-		.images {
+		.media-grid {
 			grid-template-columns: 1fr;
 		}
 	}

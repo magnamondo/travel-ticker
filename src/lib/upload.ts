@@ -3,6 +3,8 @@
 // Implements battle-tested patterns: timeouts, retries with exponential backoff, AIMD concurrency
 
 import { AIMDController, createAIMDController } from './upload/aimd';
+import { sha256 } from '@oslojs/crypto/sha2';
+import { encodeHexLowerCase } from '@oslojs/encoding';
 
 export interface UploadSession {
 	sessionId: string;
@@ -56,12 +58,12 @@ let recentSpeeds: number[] = [];
 const STORAGE_KEY_PREFIX = 'upload_session_';
 
 /**
- * Compute MD5 checksum of a buffer
+ * Compute SHA-256 checksum of a buffer (truncated to 32 chars)
+ * Uses pure JS implementation from @oslojs/crypto - works reliably everywhere
  */
-async function computeChecksum(data: ArrayBuffer): Promise<string> {
-	const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-	const hashArray = Array.from(new Uint8Array(hashBuffer));
-	return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+function computeChecksum(data: ArrayBuffer): string {
+	const hash = sha256(new Uint8Array(data));
+	return encodeHexLowerCase(hash).substring(0, 32);
 }
 
 /**
@@ -249,7 +251,7 @@ async function uploadChunkWithRetry(
 			
 			// Compute checksum for data integrity verification
 			const arrayBuffer = await chunkBlob.arrayBuffer();
-			const checksum = await computeChecksum(arrayBuffer);
+			const checksum = computeChecksum(arrayBuffer);
 			
 			const result = await new Promise<ChunkUploadResult>((resolve, reject) => {
 				const xhr = new XMLHttpRequest();
@@ -321,7 +323,8 @@ async function uploadChunkWithRetry(
 				const formData = new FormData();
 				formData.append('sessionId', sessionId);
 				formData.append('chunkIndex', chunkIndex.toString());
-				formData.append('chunk', chunkBlob);
+				// Provide an explicit safe filename to avoid header encoding issues
+				formData.append('chunk', chunkBlob, `chunk_${chunkIndex}`);
 				formData.append('checksum', checksum);
 				
 				xhr.open('POST', '/api/upload/chunk');
