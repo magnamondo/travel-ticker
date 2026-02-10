@@ -40,6 +40,7 @@ type MilestoneResponse = {
 	commentCount?: number;
 	reactions?: ReactionCount[];
 	groupNames?: string[];
+	published: boolean;
 };
 
 const PAGE_SIZE = 10;
@@ -70,29 +71,29 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	}
 
 	// Build where clause:
-	// - Must be published
-	// - Admins see all, others only see accessible milestones
-	const baseConditions = eq(milestone.published, true);
+	// - Non-admins see only published, admins see all
+	// - Handle group-based access restrictions
+	const publishedCondition = eq(milestone.published, true);
 	
 	let accessCondition;
 	if (userIsAdmin) {
-		// Admin sees all published milestones
-		accessCondition = baseConditions;
+		// Admin sees all milestones (published and unpublished)
+		accessCondition = undefined;
 	} else if (allRestrictedMilestoneIds.length === 0) {
 		// No restricted milestones exist - all public
-		accessCondition = baseConditions;
+		accessCondition = publishedCondition;
 	} else if (accessibleRestrictedIds.length === 0) {
 		// User has no access to any restricted milestones - only show unrestricted
-		accessCondition = and(baseConditions, notInArray(milestone.id, allRestrictedMilestoneIds));
+		accessCondition = and(publishedCondition, notInArray(milestone.id, allRestrictedMilestoneIds));
 	} else {
 		// User can see unrestricted OR their accessible restricted milestones
 		// Note: We need to handle this in two parts since we can't combine notInArray with inArray in OR
 		// Solution: exclude restricted milestones user doesn't have access to
 		const inaccessibleIds = allRestrictedMilestoneIds.filter(id => !accessibleRestrictedIds.includes(id));
 		if (inaccessibleIds.length === 0) {
-			accessCondition = baseConditions;
+			accessCondition = publishedCondition;
 		} else {
-			accessCondition = and(baseConditions, notInArray(milestone.id, inaccessibleIds));
+			accessCondition = and(publishedCondition, notInArray(milestone.id, inaccessibleIds));
 		}
 	}
 
@@ -105,6 +106,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			date: milestone.date,
 			avatar: milestone.avatar,
 			meta: milestone.meta,
+			published: milestone.published,
 			segmentName: segment.name,
 			segmentIcon: segment.icon,
 			segmentSortOrder: segment.sortOrder,
@@ -287,7 +289,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			meta: m.meta && m.meta.length > 0 ? m.meta : undefined,
 			commentCount: commentCount > 0 ? commentCount : undefined,
 			reactions: reactions.length > 0 ? reactions : undefined,
-			groupNames: groupNames && groupNames.length > 0 ? groupNames : undefined
+			groupNames: groupNames && groupNames.length > 0 ? groupNames : undefined,
+			published: m.published
 		};
 	});
 

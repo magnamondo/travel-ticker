@@ -1060,6 +1060,8 @@
 		background: var(--color-bg-secondary);
 		color: var(--color-text);
 		font-size: 0.875rem;
+		height: 2.25rem;
+		box-sizing: border-box;
 	}
 
 	input:focus,

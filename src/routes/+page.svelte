@@ -63,6 +63,7 @@
 		commentCount?: number;
 		reactions?: ReactionCount[];
 		groupNames?: string[];
+		published: boolean;
 	};
 
 	// Lightbox state
@@ -262,14 +263,14 @@
 	<title>Toulouse - Lomé | Travel Ticker | Magnamondo</title>
 	<meta property="og:type" content="website">
 	<meta property="og:title" content="Toulouse - Lomé | Travel Ticker">
-	<meta property="og:description" content="Follow along on our adventure from Toulouse to Lomé">
+	<meta property="og:description" content="Follow along on my adventure from Toulouse to Lomé and back">
 	<meta property="og:image" content="{data.origin}/logo.png">
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
 	<meta property="og:url" content={data.origin}>
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="Toulouse - Lomé | Travel Ticker">
-	<meta name="twitter:description" content="Follow along on our adventure from Toulouse to Lomé">
+	<meta name="twitter:description" content="Follow along on my adventure from Toulouse to Lomé and back">
 	<meta name="twitter:image" content="{data.origin}/logo.png">
 </svelte:head>
 
@@ -402,6 +403,11 @@
 						<div class="timeline-content">
 							<a href="/entry/{milestone.id}" style="text-decoration: none; color: inherit; display: block;">
 								<div class="card">
+									{#if !milestone.published}
+										<div class="draft-badge" title="Draft - not visible to others">
+											📝 Draft
+										</div>
+									{/if}
 									{#if milestone.groupNames?.length}
 										<div class="group-badge" title={milestone.groupNames.join(', ')}>
 											🔒 {milestone.groupNames.length === 1 ? milestone.groupNames[0] : `${milestone.groupNames.length} groups`}
@@ -413,7 +419,7 @@
 									{#if milestone.avatar}
 										<img src={milestone.avatar} alt="" class="avatar" />
 									{/if}
-									<div class="card-body">
+									<div class="card-body" class:text-only={!milestone.media?.length}>
 										<h3>{milestone.title}</h3>
 									<p>{@html (milestone.description ?? '')
 											.replace(/&/g, '&amp;')
@@ -892,6 +898,26 @@
 		z-index: 1;
 	}
 
+	.draft-badge {
+		position: absolute;
+		top: 0.25rem;
+		right: 0.25rem;
+		background: rgba(251, 191, 36, 0.9);
+		color: rgba(0, 0, 0, 0.85);
+		font-size: 0.65rem;
+		font-weight: 600;
+		padding: 0.2rem 0.5rem;
+		border-radius: var(--radius-sm);
+		box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+		white-space: nowrap;
+		z-index: 1;
+	}
+
+	/* Move group badge down when draft badge is present */
+	.draft-badge + .group-badge {
+		top: 1.5rem;
+	}
+
 	/* Curved pointer towards timeline dot - all point left now */
 	.card-pointer {
 		position: absolute;
@@ -954,6 +980,14 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	/* Text-only entries show full description */
+	.card-body.text-only p {
+		display: block;
+		-webkit-line-clamp: unset;
+		line-clamp: unset;
+		overflow: visible;
 	}
 
 	.media-grid {
