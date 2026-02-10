@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { uploadSession } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { writeFile, readFile, readdir, unlink, stat } from 'fs/promises';
+import { writeFile, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { createHash } from 'crypto';
@@ -250,12 +250,8 @@ export const PUT: RequestHandler = async ({ request }) => {
 
 	// Cleanup chunk files
 	try {
-		const files = await readdir(sessionDir);
-		for (const file of files) {
-			await unlink(join(sessionDir, file));
-		}
-		const { rmdir } = await import('fs/promises');
-		await rmdir(sessionDir);
+		const { rm } = await import('fs/promises');
+		await rm(sessionDir, { recursive: true });
 	} catch {
 		// Ignore cleanup errors
 	}

@@ -1,11 +1,12 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
-import { segment, milestone, milestoneMedia, group, milestoneGroup } from '$lib/server/db/schema';
+import { segment, milestone, milestoneMedia, group, milestoneGroup, videoJob, uploadSession } from '$lib/server/db/schema';
 import { asc, eq, desc, max, and, inArray } from 'drizzle-orm';
 import { fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
-import { readdir, unlink } from 'fs/promises';
+import { readdir, unlink, rm } from 'fs/promises';
 import { join } from 'path';
+import { existsSync } from 'fs';
 
 const DATA_DIR = process.env.DATA_DIR || 'data';
 const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
@@ -241,11 +242,58 @@ export const actions: Actions = {
 			.from(milestoneMedia)
 			.where(eq(milestoneMedia.milestoneId, milestoneId));
 
-		// Delete physical files
+		// Get video job IDs to clean up their input files
+		const videoJobIds = mediaToDelete
+			.filter(m => m.videoJobId)
+			.map(m => m.videoJobId as string);
+
+		// Fetch video jobs to get input paths
+		if (videoJobIds.length > 0) {
+			const jobs = await db
+				.select({ inputPath: videoJob.inputPath })
+				.from(videoJob)
+				.where(inArray(videoJob.id, videoJobIds));
+
+			// Delete video job input files (original uploaded videos)
+			for (const job of jobs) {
+				try {
+					if (existsSync(job.inputPath)) {
+						await unlink(job.inputPath);
+					}
+				} catch {
+					// Ignore - file may already be deleted
+				}
+			}
+
+			// Delete video job records
+			await db.delete(videoJob).where(inArray(videoJob.id, videoJobIds));
+		}
+
+		// Delete physical media files
 		for (const media of mediaToDelete) {
 			await deleteFileFromUrl(media.url);
 			await deleteFileFromUrl(media.thumbnailUrl);
 		}
+
+		// Clean up upload session chunks for this milestone
+		const sessions = await db
+			.select({ id: uploadSession.id })
+			.from(uploadSession)
+			.where(eq(uploadSession.milestoneId, milestoneId));
+
+		for (const session of sessions) {
+			const chunkDir = join(UPLOADS_DIR, 'chunks', session.id);
+			try {
+				if (existsSync(chunkDir)) {
+					await rm(chunkDir, { recursive: true });
+				}
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+
+		// Delete upload sessions (should cascade, but be explicit)
+		await db.delete(uploadSession).where(eq(uploadSession.milestoneId, milestoneId));
 
 		// Delete milestone (cascades to media records)
 		await db.delete(milestone).where(eq(milestone.id, milestoneId));
@@ -372,6 +420,25 @@ export const actions: Actions = {
 			.where(eq(milestoneMedia.id, mediaId));
 
 		if (media) {
+			// Delete video job and its input file if exists
+			if (media.videoJobId) {
+				const [job] = await db
+					.select({ inputPath: videoJob.inputPath })
+					.from(videoJob)
+					.where(eq(videoJob.id, media.videoJobId));
+
+				if (job) {
+					try {
+						if (existsSync(job.inputPath)) {
+							await unlink(job.inputPath);
+						}
+					} catch {
+						// Ignore - file may already be deleted
+					}
+					await db.delete(videoJob).where(eq(videoJob.id, media.videoJobId));
+				}
+			}
+
 			// Delete physical files
 			await deleteFileFromUrl(media.url);
 			await deleteFileFromUrl(media.thumbnailUrl);

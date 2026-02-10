@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { uploadSession, milestone } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
-import { mkdir, writeFile, readdir, unlink, readFile, stat } from 'fs/promises';
+import { mkdir, writeFile, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 
@@ -133,13 +133,8 @@ async function cleanupSession(sessionId: string) {
 	// Remove chunk files
 	if (existsSync(sessionDir)) {
 		try {
-			const files = await readdir(sessionDir);
-			for (const file of files) {
-				await unlink(join(sessionDir, file));
-			}
-			// Remove directory (using rm -rf equivalent)
-			const { rmdir } = await import('fs/promises');
-			await rmdir(sessionDir);
+			const { rm } = await import('fs/promises');
+			await rm(sessionDir, { recursive: true });
 		} catch {
 			// Ignore cleanup errors
 		}

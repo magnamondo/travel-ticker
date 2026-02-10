@@ -91,6 +91,21 @@ See `docker-compose.yml` for the full configuration with healthchecks, resource 
 
 ## Maintenance
 
+### Cleaning Up Orphaned Files
+
+If disk space isn't freed after deleting entries, run the cleanup script to remove orphaned files:
+
+```bash
+# Preview what would be deleted
+npx tsx scripts/cleanup-orphaned-files.ts --dry-run
+
+# Actually delete orphaned files
+npx tsx scripts/cleanup-orphaned-files.ts
+
+# Docker
+docker compose exec travel-ticker npx tsx scripts/cleanup-orphaned-files.ts
+```
+
 ### Regenerating Thumbnails
 
 If you change the thumbnail size or need to regenerate all thumbnails:

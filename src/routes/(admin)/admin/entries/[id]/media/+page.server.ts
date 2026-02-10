@@ -1,11 +1,12 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
-import { milestone, milestoneMedia } from '$lib/server/db/schema';
+import { milestone, milestoneMedia, videoJob } from '$lib/server/db/schema';
 import { eq, asc, and } from 'drizzle-orm';
 import { error, fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
+import { existsSync } from 'fs';
 
 const DATA_DIR = process.env.DATA_DIR || 'data';
 const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
@@ -95,6 +96,25 @@ export const actions: Actions = {
 			.where(eq(milestoneMedia.id, mediaId));
 
 		if (media) {
+			// Delete video job and its input file if exists
+			if (media.videoJobId) {
+				const [job] = await db
+					.select({ inputPath: videoJob.inputPath })
+					.from(videoJob)
+					.where(eq(videoJob.id, media.videoJobId));
+
+				if (job) {
+					try {
+						if (existsSync(job.inputPath)) {
+							await unlink(job.inputPath);
+						}
+					} catch {
+						// Ignore - file may already be deleted
+					}
+					await db.delete(videoJob).where(eq(videoJob.id, media.videoJobId));
+				}
+			}
+
 			await deleteFileFromUrl(media.url);
 			await deleteFileFromUrl(media.thumbnailUrl);
 		}
