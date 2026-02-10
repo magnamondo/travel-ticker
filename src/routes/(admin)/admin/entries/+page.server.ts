@@ -6,7 +6,6 @@ import { fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
 import { readdir, unlink } from 'fs/promises';
 import { join } from 'path';
-import { invalidateCache } from '$lib/server/cache';
 
 const DATA_DIR = process.env.DATA_DIR || 'data';
 const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
@@ -166,8 +165,6 @@ export const actions: Actions = {
 			}
 		}
 
-		await invalidateCache(['home', `entry-${milestoneId}`]);
-
 		return { success: true, message: 'Entry added!' };
 	},
 
@@ -231,8 +228,6 @@ export const actions: Actions = {
 			});
 		}
 
-		await invalidateCache(['home', `entry-${milestoneId}`]);
-
 		return { success: true, message: 'Entry updated!' };
 	},
 
@@ -253,8 +248,6 @@ export const actions: Actions = {
 		}
 
 		// Delete milestone (cascades to media records)
-		await invalidateCache(['home', `entry-${milestoneId}`]);
-
 		await db.delete(milestone).where(eq(milestone.id, milestoneId));
 
 		return { success: true, message: 'Entry deleted!' };
@@ -287,8 +280,6 @@ export const actions: Actions = {
 			createdAt: new Date()
 		});
 
-		await invalidateCache(['home']);
-
 		return { success: true, message: 'Segment created!' };
 	},
 
@@ -312,8 +303,6 @@ export const actions: Actions = {
 			})
 			.where(eq(segment.id, segmentId));
 
-		await invalidateCache(['home']);
-
 		return { success: true, message: 'Segment updated!' };
 	},
 
@@ -330,8 +319,6 @@ export const actions: Actions = {
 		if (milestones.length > 0) {
 			return fail(400, { error: 'Cannot delete segment with entries. Delete entries first.' });
 		}
-
-		await invalidateCache(['home']);
 
 		await db.delete(segment).where(eq(segment.id, segmentId));
 
@@ -371,8 +358,6 @@ export const actions: Actions = {
 			createdAt: new Date()
 		});
 
-		await invalidateCache(['home', `entry-${milestoneId}`]);
-
 		return { success: true, message: 'Media added!' };
 	},
 
@@ -390,10 +375,6 @@ export const actions: Actions = {
 			// Delete physical files
 			await deleteFileFromUrl(media.url);
 			await deleteFileFromUrl(media.thumbnailUrl);
-		if (media) {
-			await invalidateCache(['home', `entry-${media.milestoneId}`]);
-		}
-
 		}
 
 		await db.delete(milestoneMedia).where(eq(milestoneMedia.id, mediaId));
@@ -438,8 +419,6 @@ export const actions: Actions = {
 			.set({ published: true })
 			.where(eq(milestone.id, milestoneId));
 
-		await invalidateCache(['home', `entry-${milestoneId}`]);
-
 		return { success: true, message: 'Entry published!' };
 	},
 
@@ -455,8 +434,6 @@ export const actions: Actions = {
 			.update(milestone)
 			.set({ published: false })
 			.where(eq(milestone.id, milestoneId));
-
-		await invalidateCache(['home', `entry-${milestoneId}`]);
 
 		return { success: true, message: 'Entry unpublished!' };
 	},
@@ -490,10 +467,6 @@ export const actions: Actions = {
 					.where(eq(milestoneMedia.id, item.id));
 			}
 
-			if (milestoneId) {
-				await invalidateCache(['home', `entry-${milestoneId}`]);
-			}
-
 			return { success: true, message: 'Media reordered!' };
 		} catch {
 			return fail(400, { error: 'Invalid order data' });
@@ -517,8 +490,6 @@ export const actions: Actions = {
 					.set({ sortOrder: item.sortOrder })
 					.where(eq(milestone.id, item.id));
 			}
-
-			await invalidateCache(['home']);
 
 			return { success: true, message: 'Entries reordered!' };
 		} catch {

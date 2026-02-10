@@ -7,8 +7,6 @@ import { nanoid } from 'nanoid';
 import { canComment, canReact } from '$lib/roles';
 import { canUserAccessMilestone } from '$lib/server/groups';
 
-import { invalidateCache } from '$lib/server/cache';
-
 export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) => {
 	// Cache the entry page for 1 hour, but allow invalidation via 'entry-[id]' tag
 	setHeaders({
@@ -223,8 +221,6 @@ export const actions: Actions = {
 			content,
 			createdAt: new Date()
 		});
-
-		await invalidateCache([`entry-${params.id}`]);
 
 		return { success: true };
 	}
