@@ -6,16 +6,26 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
-	import { canReact } from '$lib/roles';
+	import { canReact, isAdmin } from '$lib/roles';
+	import { toasts } from '$lib/stores/toast.svelte';
 
 	// User menu state
 	let userMenuOpen = $state(false);
 
-	function toggleUserMenu() {
+	function toggleUserMenu(e: Event) {
+		// On touch devices, use touchend to trigger and prevent default to avoid double-handling
+		if (e.type === 'touchend') {
+			e.preventDefault();
+		}
 		userMenuOpen = !userMenuOpen;
 	}
 
-	function closeUserMenu() {
+	function closeUserMenu(e?: Event) {
+		if (e?.type === 'touchend') {
+			e.preventDefault();
+		} else if (e) {
+			e.preventDefault();
+		}
 		userMenuOpen = false;
 	}
 
@@ -52,6 +62,7 @@
 		meta?: MilestoneMeta[];
 		commentCount?: number;
 		reactions?: ReactionCount[];
+		groupNames?: string[];
 	};
 
 	// Lightbox state
@@ -143,6 +154,19 @@
 	// Track updated reactions per milestone
 	let milestoneReactionsMap = new SvelteMap<number, ReactionCount[]>();
 
+	// Track expanded media grids
+	let expandedMediaIds = new SvelteMap<number, boolean>();
+
+	function toggleMediaExpanded(milestoneId: number, e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		expandedMediaIds.set(milestoneId, !expandedMediaIds.get(milestoneId));
+	}
+
+	function isMediaExpanded(milestoneId: number): boolean {
+		return expandedMediaIds.get(milestoneId) ?? false;
+	}
+
 	let milestones = $derived([...data.milestones, ...additionalMilestones]);
 	
 	function getReactions(milestone: Milestone): ReactionCount[] {
@@ -157,7 +181,12 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			milestoneReactionsMap.set(milestoneId, formatReactions(reactions, data.user?.id));
+			const formatted = formatReactions(reactions, data.user?.id);
+			milestoneReactionsMap.set(milestoneId, formatted);
+			const userReacted = formatted.find(r => r.emoji === emoji)?.userReacted ?? false;
+			toasts.success(`${emoji} ${userReacted ? 'added' : 'removed'}`);
+		} else {
+			toasts.error('Failed to update reaction');
 		}
 	}
 
@@ -177,7 +206,7 @@
 		return `${date.month} ${date.day}, ${date.year}`;
 	}
 
-	// Group milestones by segment (descending order)
+	// Group milestones by segment (API returns in correct order: newest first)
 	let groupedMilestones = $derived.by(() => {
 		const groups: GroupedMilestones[] = [];
 		let currentGroup: GroupedMilestones | null = null;
@@ -194,7 +223,7 @@
 			currentGroup.milestones.push(milestone);
 		}
 
-		return groups.reverse();
+		return groups;
 	});
 
 	async function loadMore() {
@@ -202,7 +231,7 @@
 
 		loading = true;
 		try {
-			const response = await fetch(`/api/milestones?offset=${milestones.length}&limit=10`);
+			const response = await fetch(`/api/milestones?offset=${milestones.length}&limit=3`);
 			const result = await response.json();
 			additionalMilestones = [...additionalMilestones, ...result.milestones];
 			hasMore = result.hasMore;
@@ -230,22 +259,51 @@
 </script>
 
 <svelte:head>
-	<title>Toulouse - Tsévié | Travel Ticker | Magnamondo</title>
+	<title>Toulouse - Lomé | Travel Ticker | Magnamondo</title>
+	<meta property="og:type" content="website">
+	<meta property="og:title" content="Toulouse - Lomé | Travel Ticker">
+	<meta property="og:description" content="Follow along on our adventure from Toulouse to Lomé">
+	<meta property="og:image" content="{data.origin}/logo.png">
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+	<meta property="og:url" content={data.origin}>
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="Toulouse - Lomé | Travel Ticker">
+	<meta name="twitter:description" content="Follow along on our adventure from Toulouse to Lomé">
+	<meta name="twitter:image" content="{data.origin}/logo.png">
 </svelte:head>
 
 {#if data.user}
 	<div class="user-menu-container">
-		<button class="user-menu-trigger" onclick={toggleUserMenu} aria-label="User menu">
+		<button 
+			type="button" 
+			class="user-menu-trigger" 
+			onclick={toggleUserMenu} 
+			ontouchend={toggleUserMenu}
+			aria-label="User menu"
+		>
 			<span class="user-avatar">👤</span>
 		</button>
 		{#if userMenuOpen}
-			<button class="user-menu-backdrop" onclick={closeUserMenu} aria-label="Close menu"></button>
+			<button 
+				type="button" 
+				class="user-menu-backdrop" 
+				onclick={closeUserMenu} 
+				ontouchend={closeUserMenu}
+				aria-label="Close menu"
+			></button>
 			<div class="user-menu-dropdown">
 				<div class="user-menu-header">
 					<span class="user-email">{data.user.email}</span>
 				</div>
 				<div class="user-menu-items">
-					<a href={resolve("/profile")} class="user-menu-item" onclick={closeUserMenu}>
+					{#if isAdmin(data.user.roles)}
+						<a href={resolve("/admin")} class="user-menu-item" onclick={() => userMenuOpen = false}>
+							<span class="menu-icon">⚙️</span>
+							<span>Admin</span>
+						</a>
+					{/if}
+					<a href={resolve("/profile")} class="user-menu-item" onclick={() => userMenuOpen = false}>
 						<span class="menu-icon">👤</span>
 						<span>Profile</span>
 					</a>
@@ -259,6 +317,18 @@
 			</div>
 		{/if}
 	</div>
+{:else}
+	<div class="user-menu-container">
+		<a href={resolve("/login")} class="user-menu-trigger ghost-trigger" aria-label="Log in">
+			<svg class="ghost-avatar" viewBox="7 -2 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M50 8C28 8 18 28 18 45C18 55 16 62 14 68C12 74 18 78 22 75C26 72 30 74 32 78C34 82 38 85 42 82C46 79 50 82 52 85C54 88 58 88 60 85C62 82 66 79 70 82C74 85 78 82 80 78C82 74 86 72 90 75C94 78 100 74 98 68C96 62 94 55 94 45C94 28 84 8 62 8C58 8 54 8 50 8Z" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+				<ellipse cx="38" cy="42" rx="5" ry="6" fill="currentColor"/>
+				<ellipse cx="58" cy="42" rx="5" ry="6" fill="currentColor"/>
+				<path d="M35 60C38 58 42 62 45 58" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+				<path d="M55 58C58 62 62 58 65 60" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+			</svg>
+		</a>
+	</div>
 {/if}
 
 <section class="timeline-section">
@@ -269,17 +339,15 @@
 				<polyline points="0,12 8,6 8,18 0,12" fill="#3b82f6" />
 				<line x1="8" y1="12" x2="192" y2="12" stroke="#3b82f6" stroke-width="2" />
 				<polyline points="200,12 192,6 192,18 200,12" fill="#3b82f6" />
-			</svg> <span>Tsévié</span>
+			</svg> <span>Lomé</span>
 		</p>
 	</header>
 
 	{#each groupedMilestones as group (group.segment + '-' + group.milestones[0]?.id)}
 		<div class="segment-section">
 			<div class="segment-header">
-				<div class="segment-line segment-line-left"></div>
 				<span class="segment-icon">{group.segmentIcon}</span>
 				<span class="segment-name">{group.segment}</span>
-				<div class="segment-line segment-line-right"></div>
 			</div>
 
 			<div class="timeline">
@@ -331,44 +399,69 @@
 								<span class="swipe-chevron">‹</span>
 							</div>
 						{/if}
-						<a href="/entry/{milestone.id}" class="timeline-content">
-							<div class="card">
-								{#if milestone.avatar}
-									<img src={milestone.avatar} alt="" class="avatar" />
-								{/if}
-								<div class="card-body">
-									<h3>{milestone.title}</h3>
-									<p>{milestone.description}</p>
+						<div class="timeline-content">
+							<a href="/entry/{milestone.id}" style="text-decoration: none; color: inherit; display: block;">
+								<div class="card">
+									{#if milestone.groupNames?.length}
+										<div class="group-badge" title={milestone.groupNames.join(', ')}>
+											🔒 {milestone.groupNames.length === 1 ? milestone.groupNames[0] : `${milestone.groupNames.length} groups`}
+										</div>
+									{/if}
+									<svg class="card-pointer" viewBox="0 0 16 28" preserveAspectRatio="none">
+										<path d="M16 0 Q 6 5 0 14 Q 6 23 16 28 Z" fill="var(--color-bg-elevated)"/>
+									</svg>
+									{#if milestone.avatar}
+										<img src={milestone.avatar} alt="" class="avatar" />
+									{/if}
+									<div class="card-body">
+										<h3>{milestone.title}</h3>
+									<p>{@html (milestone.description ?? '')
+											.replace(/&/g, '&amp;')
+											.replace(/</g, '&lt;')
+											.replace(/>/g, '&gt;')
+											.replace(/\n/g, '<br>')}</p>
 									{#if milestone.media}
-										<div class="media-grid">
-											{#each milestone.media as item, i (i)}
-												{@const mediaIndex = milestone.media!.slice(0, i).filter(m => m.type === 'image' || m.isReady).length}
+										{@const readyMedia = milestone.media.filter(m => m.type === 'image' || m.thumbnailUrl)}
+										{@const expanded = isMediaExpanded(milestone.id)}
+										{@const maxVisible = 3}
+										{@const displayMedia = expanded ? readyMedia : readyMedia.slice(0, maxVisible)}
+										{@const hiddenCount = readyMedia.length - maxVisible}
+										{#if readyMedia.length > 0}
+										<div class="media-grid" class:expanded>
+											{#each displayMedia as item, i (i)}
+												{@const mediaIndex = readyMedia.slice(0, expanded ? i : i).filter(m => m.type === 'image' || m.isReady).length}
+												{@const isLastVisible = !expanded && i === maxVisible - 1 && hiddenCount > 0}
 												{#if item.type === 'image'}
 													<button
 														class="thumbnail-button"
-														onclick={(e) => openLightbox(milestone.media!, mediaIndex, e)}
-														aria-label="View image {i + 1}"
+														class:has-more-overlay={isLastVisible}
+														onclick={(e) => isLastVisible ? toggleMediaExpanded(milestone.id, e) : openLightbox(readyMedia, mediaIndex, e)}
+														ontouchstart={(e) => e.stopPropagation()}
+														aria-label={isLastVisible ? `Show ${hiddenCount} more` : `View image ${i + 1}`}
 													>
 														<img src={item.thumbnailUrl || item.url} alt="" class="thumbnail" />
-													</button>
-												{:else}
-													<!-- Video: show thumbnail, play icon when ready -->
-													<button
-														class="thumbnail-button video-thumb"
-														onclick={(e) => item.isReady && openLightbox(milestone.media!, mediaIndex, e)}
-														aria-label={item.isReady ? 'Play video' : 'Video processing'}
-														disabled={!item.isReady}
-													>
-														{#if item.thumbnailUrl}
-															<img src={item.thumbnailUrl} alt="" class="thumbnail" />
-														{:else}
-															<div class="thumbnail video-placeholder">
-																<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-																	<path d="M8 5v14l11-7z"/>
-																</svg>
+														{#if isLastVisible}
+															<div class="more-overlay">
+																<span>+{hiddenCount}</span>
 															</div>
 														{/if}
-														{#if item.isReady}
+													</button>
+												{:else}
+													<!-- Video with thumbnail ready -->
+													<button
+														class="thumbnail-button video-thumb"
+														class:has-more-overlay={isLastVisible}
+														onclick={(e) => isLastVisible ? toggleMediaExpanded(milestone.id, e) : (item.isReady && openLightbox(readyMedia, mediaIndex, e))}
+														ontouchstart={(e) => e.stopPropagation()}
+														aria-label={isLastVisible ? `Show ${hiddenCount} more` : (item.isReady ? 'Play video' : 'Video processing')}
+														disabled={!isLastVisible && !item.isReady}
+													>
+														<img src={item.thumbnailUrl} alt="" class="thumbnail" />
+														{#if isLastVisible}
+															<div class="more-overlay">
+																<span>+{hiddenCount}</span>
+															</div>
+														{:else if item.isReady}
 															<div class="play-overlay">
 																<svg viewBox="0 0 24 24" fill="currentColor">
 																	<path d="M8 5v14l11-7z"/>
@@ -379,11 +472,13 @@
 												{/if}
 											{/each}
 										</div>
+										{/if}
 									{/if}
 								</div>
 							</div>
+							</a>
 							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-							<div class="card-reactions" class:hidden={swipedItemId === milestone.id} onclick={(e) => e.preventDefault()}>
+							<div class="card-reactions" class:hidden={swipedItemId === milestone.id}>
 								<Reactions
 									reactions={getReactions(milestone)}
 									targetType="milestone"
@@ -393,11 +488,11 @@
 									onReact={(emoji) => handleReaction(milestone.id, emoji)}
 								/>
 							</div>
-						</a>
+						</div>
 						{#if milestone.commentCount}
 							<div class="timeline-dot comment-bubble" title="{milestone.commentCount} comments">
 								<svg class="comment-shape" viewBox="0 0 24 24" fill="currentColor">
-									<path d="M2 6a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H7l-5 5V6z"/>
+									<rect x="2" y="2" width="20" height="20" rx="4" ry="4"/>
 								</svg>
 								<span class="comment-count">{milestone.commentCount}</span>
 							</div>
@@ -431,7 +526,9 @@
 	.user-menu-container {
 		position: fixed;
 		top: 1rem;
+		top: max(1rem, env(safe-area-inset-top) + 0.5rem);
 		right: 1rem;
+		right: max(1rem, env(safe-area-inset-right) + 1rem);
 		z-index: 1000;
 	}
 
@@ -447,14 +544,37 @@
 		justify-content: center;
 		transition: border-color 0.2s, box-shadow 0.2s;
 		box-shadow: var(--shadow-sm);
+		-webkit-tap-highlight-color: transparent;
+		-webkit-appearance: none;
+		appearance: none;
 	}
 
-	.user-menu-trigger:hover {
-		border-color: var(--color-primary);
+	@media (hover: hover) {
+		.user-menu-trigger:hover {
+			border-color: var(--color-primary);
+		}
 	}
 
 	.user-avatar {
 		font-size: 1.25rem;
+	}
+
+	.ghost-trigger {
+		text-decoration: none;
+	}
+
+	.ghost-avatar {
+		width: 28px;
+		height: 28px;
+		color: var(--color-text-muted);
+		transition: color 0.2s, transform 0.2s;
+	}
+
+	@media (hover: hover) {
+		.ghost-trigger:hover .ghost-avatar {
+			color: var(--color-primary);
+			transform: scale(1.1);
+		}
 	}
 
 	.user-menu-backdrop {
@@ -467,6 +587,7 @@
 		background: transparent;
 		border: none;
 		cursor: default;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	.user-menu-dropdown {
@@ -479,6 +600,7 @@
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-lg);
 		overflow: hidden;
+		transform: translateZ(0); /* Fix Safari rendering issues */
 	}
 
 	.user-menu-header {
@@ -592,7 +714,7 @@
 	.timeline::before {
 		content: '';
 		position: absolute;
-		left: 50%;
+		left: 24px;
 		transform: translateX(-50%);
 		top: 0;
 		bottom: 0;
@@ -611,16 +733,16 @@
 		display: flex;
 		align-items: center;
 		margin-bottom: 2rem;
-	}
-
-	.timeline-item.left {
+		padding-left: 32px;
 		justify-content: flex-start;
-		padding-right: 50%;
 	}
 
+	/* Override left/right - all items on right side now */
+	.timeline-item.left,
 	.timeline-item.right {
-		justify-content: flex-end;
-		padding-left: 50%;
+		justify-content: flex-start;
+		padding-left: 32px;
+		padding-right: 0;
 	}
 
 	.timeline-content {
@@ -634,7 +756,7 @@
 	}
 
 	.timeline-content:hover .card {
-		box-shadow: var(--shadow-md);
+		filter: drop-shadow(var(--shadow-md));
 	}
 
 	.card-reactions {
@@ -658,16 +780,20 @@
 		gap: 0.25rem;
 		padding: 0.5rem;
 		z-index: 0;
+		/* Position meta at the right edge of the card, hidden by default */
+		right: 0;
+		transform: translateY(-50%) translateX(100%);
+		opacity: 0;
+		pointer-events: none;
 	}
 
-	.timeline-meta.meta-left {
-		right: calc(50% + 2rem);
-		align-items: flex-end;
-	}
-
+	/* Both meta-left and meta-right use same positioning now */
+	.timeline-meta.meta-left,
 	.timeline-meta.meta-right {
-		left: calc(50% + 2rem);
+		right: 0;
+		left: auto;
 		align-items: flex-start;
+		padding-left: 1rem;
 	}
 
 	.meta-item {
@@ -708,8 +834,10 @@
 
 	.timeline-dot {
 		position: absolute;
-		left: 50%;
-		top: 50%;
+		left: 24px;
+		/* Align with card-pointer: centered, but max ~214px from top for tall cards */
+		/* Add 1rem to compensate for the margin-top offset on capped value */
+		top: min(50%, calc(200px + 14px + 1rem));
 		transform: translate(-50%, -50%);
 		margin-top: -1rem; /* Offset for reactions below the card */
 		width: 12px;
@@ -717,6 +845,12 @@
 		background: var(--color-primary);
 		border-radius: 50%;
 		z-index: 1;
+		box-shadow: var(--shadow-sm);
+		transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+	}
+
+	.timeline-content:hover ~ .timeline-dot {
+		box-shadow: var(--shadow-md);
 	}
 
 	.timeline-dot.comment-bubble {
@@ -736,11 +870,49 @@
 		background: var(--color-bg-elevated);
 		border-radius: var(--radius-md);
 		padding: 1rem;
-		box-shadow: var(--shadow-sm);
+		filter: drop-shadow(var(--shadow-sm));
+		transition: filter 0.2s ease;
+		position: relative;
 	}
 
+	.group-badge {
+		position: absolute;
+		top: 0.25rem;
+		right: 0.25rem;
+		background: rgba(0, 0, 0, 0.6);
+		color: rgba(255, 255, 255, 0.9);
+		font-size: 0.65rem;
+		padding: 0.2rem 0.5rem;
+		border-radius: var(--radius-sm);
+		box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+		white-space: nowrap;
+		max-width: 120px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		z-index: 1;
+	}
+
+	/* Curved pointer towards timeline dot - all point left now */
+	.card-pointer {
+		position: absolute;
+		/* Center vertically, but max 200px from top for tall cards */
+		top: min(calc(50% - 14px), 200px);
+		width: 16px;
+		height: 28px;
+		left: -16px;
+	}
+
+	/* No transform needed - pointer points left by default */
+	.timeline-item.left .card-pointer,
+	.timeline-item.right .card-pointer {
+		left: -16px;
+		right: auto;
+		transform: none;
+	}
+
+	/* All cards use same layout - no row-reverse */
 	.timeline-item.right .card {
-		flex-direction: row-reverse;
+		flex-direction: row;
 	}
 
 	.card-body {
@@ -755,19 +927,15 @@
 	}
 
 	.comment-shape {
-		width: 24px;
-		height: 28px;
+		width: 22px;
+		height: 22px;
 		color: var(--color-accent);
 		filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2));
 	}
 
-	.timeline-item.right .comment-shape {
-		transform: scaleX(-1);
-	}
-
 	.comment-count {
 		position: absolute;
-		top: 44%;
+		top: 50%;
 		left: 50%;
 		transform: translate(-50%, -50%);
 		font-size: 0.65rem;
@@ -778,16 +946,31 @@
 	}
 
 	.card-body p {
-		font-size: 0.875rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
 		margin: 0;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 
 	.media-grid {
-		display: flex;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
-		flex-wrap: wrap;
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.25rem;
+		margin-top: 0.75rem;
+	}
+
+	/* 1 image: full width, landscape */
+	.media-grid:has(.thumbnail-button:only-child) {
+		grid-template-columns: 1fr;
+	}
+
+	/* 2 images: 2 columns */
+	.media-grid:has(.thumbnail-button:nth-child(2)):not(:has(.thumbnail-button:nth-child(3))) {
+		grid-template-columns: repeat(2, 1fr);
 	}
 
 	.thumbnail-button {
@@ -797,13 +980,24 @@
 		cursor: pointer;
 		border-radius: var(--radius-sm);
 		overflow: hidden;
-		transition: transform 0.2s, box-shadow 0.2s;
+		transition: filter 0.15s;
 		position: relative;
+		aspect-ratio: 1;
+	}
+
+	/* Single image: landscape aspect ratio */
+	.thumbnail-button:only-child {
+		aspect-ratio: 16 / 10;
+	}
+
+	/* 3+ images: first image spans 2 columns and 2 rows */
+	.media-grid:has(.thumbnail-button:nth-child(3)) .thumbnail-button:first-child {
+		grid-column: span 2;
+		grid-row: span 2;
 	}
 
 	.thumbnail-button:hover {
-		transform: scale(1.1);
-		box-shadow: var(--shadow-md);
+		filter: brightness(0.9);
 	}
 
 	.thumbnail-button:disabled {
@@ -832,16 +1026,37 @@
 	}
 
 	.video-thumb .play-overlay svg {
-		width: 20px;
-		height: 20px;
+		width: 28px;
+		height: 28px;
 		color: white;
 		filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 	}
 
-	.thumbnail {
-		width: 60px;
-		height: 60px;
+	.more-overlay {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.6);
 		border-radius: var(--radius-sm);
+	}
+
+	.more-overlay span {
+		color: white;
+		font-size: 1.25rem;
+		font-weight: 600;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+	}
+
+	.thumbnail-button.has-more-overlay:hover .more-overlay {
+		background: rgba(0, 0, 0, 0.7);
+	}
+
+	.thumbnail {
+		width: 100%;
+		height: 100%;
+		border-radius: var(--radius-md);
 		object-fit: cover;
 		background: var(--color-border);
 		display: block;
@@ -852,11 +1067,13 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--color-text-muted);
+		width: 100%;
+		height: 100%;
 	}
 
 	.date-divider {
 		display: flex;
-		justify-content: center;
+		justify-content: flex-start;
 		padding: 0.5rem 0;
 		margin-bottom: 1rem;
 		position: relative;
@@ -869,14 +1086,17 @@
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		white-space: nowrap;
-		background: color-mix(in srgb, var(--color-bg) 85%, black);
+		background: var(--color-bg);
 		padding: 0.4rem 1.25rem;
 		border-radius: var(--radius-md);
 		border: 1.5px solid color-mix(in srgb, var(--color-border) 75%, transparent);
-		box-shadow: 
-			inset 0 2px 4px rgba(0, 0, 0, 0.3),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.05),
-			0 1px 0 rgba(255, 255, 255, 0.03);
+		box-shadow:
+			inset 0 1px 4px rgba(0, 0, 0, 0.2),
+			0 1px 0 rgba(255, 255, 255, 0.05);
+		/* Center on timeline line at 24px */
+		position: relative;
+		left: 24px;
+		transform: translateX(-50%);
 	}
 
 	.avatar {
@@ -885,6 +1105,16 @@
 		border-radius: var(--radius-full);
 		object-fit: cover;
 		background: var(--color-border);
+	}
+
+	/* Tablet: 769px - 1023px */
+	@media (min-width: 769px) and (max-width: 1023px) {
+		.date-divider-text {
+			/* Prevent off-screen clipping on narrow tablets */
+			left: 0;
+			transform: none;
+			margin-left: 6px;
+		}
 	}
 
 	@media (max-width: 768px) {
@@ -910,13 +1140,13 @@
 		}
 
 		.timeline-item {
-			margin-bottom: 1rem;
+			margin-bottom: 2rem;
 		}
 
 		.timeline-item.left,
 		.timeline-item.right {
-			padding-left: 40px;
-			padding-right: 0;
+			padding-left: 42px;
+			padding-right: 1rem;
 			justify-content: flex-start;
 		}
 
@@ -924,12 +1154,12 @@
 			left: 16px;
 			width: 10px;
 			height: 10px;
-			margin-top: -0.75rem;
 		}
 
 		.timeline-dot.comment-bubble {
 			width: auto;
 			height: auto;
+			margin-top: -17px;
 		}
 
 		.timeline-item.right .card {
@@ -937,15 +1167,11 @@
 		}
 
 		.comment-shape {
-			width: 22px;
-			height: 22px;
-			transform: scaleX(-1);
+			width: 20px;
+			height: 20px;
 		}
 
 		.comment-count {
-			top: 50%;
-			left: 50%;
-			transform: translate(-50%, -50%);
 			font-size: 0.55rem;
 		}
 
@@ -959,6 +1185,15 @@
 			transition: box-shadow 0.2s ease;
 		}
 
+		/* On mobile, all cards are on the right, pointer points left */
+		.timeline-item.left .card-pointer,
+		.timeline-item.right .card-pointer {
+			right: auto;
+			left: -16px;
+			transform: none;
+			top: min(calc(50% - 14px), 200px);
+		}
+
 		.card-body h3 {
 			font-size: 0.9rem;
 		}
@@ -967,14 +1202,25 @@
 			font-size: 0.8rem;
 		}
 
+		/* Mobile: 3-column grid same as desktop */
+		.media-grid {
+			grid-template-columns: repeat(3, 1fr);
+			gap: 0.2rem;
+		}
+
 		.date-divider {
 			justify-content: flex-start;
-			padding-left: 40px;
+			padding-left: 0;
 			margin-bottom: 0.5rem;
 		}
 
 		.date-divider-text {
-			padding-left: 0;
+			margin-left: 4px;
+			padding: 0.35rem 0.75rem;
+			font-size: 0.65rem;
+			/* Limit centering on mobile */
+			left: 16px;
+			transform: translateX(-20px);
 		}
 
 		.segment-section {
@@ -983,7 +1229,7 @@
 
 		.segment-header {
 			padding: 1rem 0;
-			padding-left: 40px;
+			padding-left: 48px;
 			margin-bottom: 0;
 		}
 
@@ -1096,10 +1342,9 @@
 			justify-content: center;
 			position: absolute;
 			right: 0;
-			top: 50%;
-			transform: translateY(-50%);
+			top: 0;
+			bottom: 2rem;
 			width: 16px;
-			height: 100%;
 			color: var(--color-text-muted);
 			opacity: 0.4;
 			z-index: 1;
@@ -1145,9 +1390,10 @@
 	.segment-header {
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-start;
 		gap: 0.75rem;
 		padding: 1.5rem 0;
+		padding-left: 8px;
 		margin-bottom: 0.5rem;
 	}
 

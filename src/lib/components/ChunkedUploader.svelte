@@ -8,6 +8,8 @@
 		type UploadProgress,
 		type UploadResult
 	} from '$lib/upload';
+	import VideoThumbnail from './VideoThumbnail.svelte';
+	import { uploadQueueStore, type QueuedFile } from '$lib/stores/uploadQueue.svelte';
 
 	interface Props {
 		milestoneId?: string;
@@ -16,6 +18,7 @@
 		chunkSize?: number;
 		concurrency?: number;
 		multiple?: boolean; // Allow multiple files
+		hasActiveUploads?: boolean; // Bindable: true if uploads are in progress
 		onUploadComplete?: (result: UploadResult) => void;
 		onUploadError?: (error: Error) => void;
 		onAllUploadsComplete?: (results: UploadResult[]) => void;
@@ -28,29 +31,25 @@
 		chunkSize = 256 * 1024, // 256KB
 		concurrency = 3,
 		multiple = true,
+		hasActiveUploads = $bindable(false),
 		onUploadComplete,
 		onUploadError,
 		onAllUploadsComplete
 	}: Props = $props();
 
-	// State
-	type UploadStateType = 'idle' | 'preparing' | 'uploading' | 'paused' | 'completing' | 'completed' | 'error';
-	
-	// File queue for multiple uploads
-	interface QueuedFile {
-		file: File;
-		state: UploadStateType;
-		progress: UploadProgress | null;
-		error: string | null;
-		result: UploadResult | null;
-		abortController: AbortController | null;
-	}
-	
-	let fileQueue = $state<QueuedFile[]>([]);
-	let currentUploadIndex = $state<number>(-1);
-	let allResults = $state<UploadResult[]>([]);
+	// Queue key for the store (use milestoneId or a fallback for non-milestone uploads)
+	let queueKey = $derived(milestoneId ?? '_default_upload_queue');
+
+	// Abort controllers are kept local (can't be serialized to store)
+	const abortControllers = new Map<string, AbortController>();
+
+	// Get queue state from the store using pure getters for proper reactivity
+	let fileQueue = $derived(uploadQueueStore.getFiles(queueKey));
+	let currentUploadIndex = $derived(uploadQueueStore.getCurrentIndex(queueKey));
+	let allResults = $derived(uploadQueueStore.getResults(queueKey));
 	
 	// Legacy single-file state (for backward compatibility)
+	type UploadStateType = 'idle' | 'preparing' | 'uploading' | 'paused' | 'completing' | 'completed' | 'error';
 	let uploadState = $state<UploadStateType>('idle');
 	let selectedFile = $state<File | null>(null);
 	let progress = $state<UploadProgress | null>(null);
@@ -60,22 +59,83 @@
 	let sessionId = $state<string | null>(null);
 	let isDragging = $state(false);
 	
-	// Derived state for queue
+	// Derived state for queue - now use store's getStats for efficiency
+	let queueStats = $derived(uploadQueueStore.getStats(queueKey));
 	let isQueueMode = $derived(fileQueue.length > 0);
-	let queueCompleted = $derived(fileQueue.length > 0 && fileQueue.every(f => f.state === 'completed' || f.state === 'error'));
-	let uploadingCount = $derived(fileQueue.filter(f => f.state === 'uploading' || f.state === 'preparing').length);
-	let completedCount = $derived(fileQueue.filter(f => f.state === 'completed').length);
-	let totalQueueProgress = $derived(
-		fileQueue.length > 0
-			? fileQueue.reduce((sum, f) => sum + (f.progress?.progress ?? (f.state === 'completed' ? 100 : 0)), 0) / fileQueue.length
-			: 0
-	);
+	let queueCompleted = $derived(uploadQueueStore.isQueueCompleted(queueKey));
+	let uploadingCount = $derived(queueStats.uploading);
+	let completedCount = $derived(queueStats.completed);
+	let failedCount = $derived(queueStats.failed);
+	let pendingCount = $derived(queueStats.pending);
+	let totalQueueProgress = $derived(queueStats.progress);
 
 	// Derived state
 	let progressPercent = $derived(progress?.progress ?? 0);
 	let canPause = $derived(uploadState === 'uploading');
 	let canResume = $derived(uploadState === 'paused');
 	let canCancel = $derived(uploadState === 'uploading' || uploadState === 'paused' || uploadState === 'preparing');
+
+	// Update bindable hasActiveUploads when upload state changes
+	$effect(() => {
+		const queueActive = fileQueue.some(f => 
+			f.state === 'uploading' || f.state === 'preparing' || f.state === 'completing' || f.state === 'paused'
+		);
+		const singleActive = uploadState === 'uploading' || uploadState === 'preparing' || uploadState === 'completing' || uploadState === 'paused';
+		hasActiveUploads = queueActive || singleActive;
+	});
+
+	// Wake Lock API - prevents device from sleeping during uploads
+	let wakeLock = $state<WakeLockSentinel | null>(null);
+
+	async function requestWakeLock() {
+		if (!('wakeLock' in navigator)) {
+			console.log('Wake Lock API not supported');
+			return;
+		}
+		try {
+			wakeLock = await navigator.wakeLock.request('screen');
+			console.log('Wake lock acquired - screen will stay on during upload');
+			
+			// Wake lock is released when document becomes hidden
+			wakeLock.addEventListener('release', () => {
+				wakeLock = null;
+				console.log('Wake lock released');
+			});
+		} catch (err) {
+			console.log('Failed to acquire wake lock:', (err as Error).message);
+		}
+	}
+
+	function releaseWakeLock() {
+		if (wakeLock) {
+			wakeLock.release();
+			wakeLock = null;
+		}
+	}
+
+	// Re-acquire wake lock when page becomes visible again during active upload
+	function handleVisibilityChange() {
+		if (document.visibilityState === 'visible' && hasActiveUploads && !wakeLock) {
+			requestWakeLock();
+		}
+	}
+
+	// Manage wake lock based on upload state
+	$effect(() => {
+		if (hasActiveUploads) {
+			requestWakeLock();
+			document.addEventListener('visibilitychange', handleVisibilityChange);
+		} else {
+			releaseWakeLock();
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		}
+		
+		// Cleanup on component destroy
+		return () => {
+			releaseWakeLock();
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		};
+	});
 
 	function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
@@ -156,52 +216,100 @@
 	}
 	
 	function selectMultipleFiles(files: File[]) {
-		// Reset queue
-		fileQueue = [];
-		allResults = [];
-		currentUploadIndex = -1;
+		// Reset the queue but keep failed files
+		const existingFailed = fileQueue.filter(f => f.state === 'error');
+		uploadQueueStore.resetQueue(queueKey);
 		error = null;
 		
+		// Build new file list
+		const newFiles: QueuedFile[] = [];
+		
+		// Add back existing failed files
+		for (const failed of existingFailed) {
+			newFiles.push(failed);
+		}
+		
+		// Add new files
 		for (const file of files) {
 			const validationError = validateFile(file);
-			fileQueue.push({
+			newFiles.push({
+				id: uploadQueueStore.generateFileId(),
 				file,
 				state: validationError ? 'error' : 'idle',
 				progress: null,
 				error: validationError,
 				result: null,
-				abortController: null
+				sessionId: null
 			});
 		}
+		
+		uploadQueueStore.addFiles(queueKey, newFiles);
 	}
 	
 	function addMoreFiles(files: File[]) {
+		const newFiles: QueuedFile[] = [];
 		for (const file of files) {
 			const validationError = validateFile(file);
-			fileQueue.push({
+			newFiles.push({
+				id: uploadQueueStore.generateFileId(),
 				file,
 				state: validationError ? 'error' : 'idle',
 				progress: null,
 				error: validationError,
 				result: null,
-				abortController: null
+				sessionId: null
 			});
 		}
+		uploadQueueStore.addFiles(queueKey, newFiles);
 	}
 	
-	function removeFromQueue(index: number) {
+	async function removeFromQueue(index: number) {
 		const item = fileQueue[index];
-		if (item.abortController) {
-			item.abortController.abort();
+		// Abort if in progress
+		const controller = abortControllers.get(item.id);
+		if (controller) {
+			controller.abort();
+			abortControllers.delete(item.id);
 		}
-		fileQueue = fileQueue.filter((_, i) => i !== index);
-		// Adjust current index if needed
-		if (currentUploadIndex >= index && currentUploadIndex > 0) {
-			currentUploadIndex--;
+		// Clear upload session if it exists
+		if (item.sessionId) {
+			try {
+				await cancelUpload(item.sessionId);
+			} catch {
+				// Ignore errors
+			}
 		}
+		uploadQueueStore.removeFile(queueKey, item.id);
+	}
+	
+	async function dismissFailedItem(index: number) {
+		const item = fileQueue[index];
+		if (item.state !== 'error') return;
+		
+		// Clear upload session if it exists
+		if (item.sessionId) {
+			try {
+				await cancelUpload(item.sessionId);
+			} catch {
+				// Ignore errors
+			}
+		}
+		// Also clear from localStorage
+		const storageKey = `upload_session_${item.file.name}_${item.file.size}`;
+		localStorage.removeItem(storageKey);
+		
+		uploadQueueStore.removeFile(queueKey, item.id);
+	}
+	
+	function clearCompletedFiles() {
+		// Only remove completed files, keep failed ones
+		fileQueue = fileQueue.filter(f => f.state !== 'completed');
 	}
 
 	let isPausing = $state(false);
+
+	// Retry tracking for user feedback
+	let retryInfo = $state<{ chunkIndex: number; attempt: number; maxRetries: number } | null>(null);
 
 	async function startUpload() {
 		if (!selectedFile) return;
@@ -209,6 +317,7 @@
 		uploadState = 'preparing';
 		error = null;
 		isPausing = false;
+		retryInfo = null;
 		abortController = new AbortController();
 
 		try {
@@ -222,6 +331,10 @@
 				onProgress: (p) => {
 					progress = p;
 				},
+				onRetry: (chunkIndex, attempt, maxRetries, err) => {
+					retryInfo = { chunkIndex, attempt, maxRetries };
+					console.log(`Retrying chunk ${chunkIndex}, attempt ${attempt}/${maxRetries}:`, err.message);
+				},
 				onError: (err, chunkIndex) => {
 					console.error(`Chunk ${chunkIndex} error:`, err);
 				}
@@ -229,8 +342,11 @@
 
 			uploadState = 'completed';
 			result = uploadResult;
+			retryInfo = null;
 			onUploadComplete?.(uploadResult);
+			onAllUploadsComplete?.([uploadResult]);
 		} catch (err) {
+			retryInfo = null;
 			if ((err as Error).message === 'Upload cancelled') {
 				// Check if this was a pause or a cancel
 				if (isPausing) {
@@ -296,9 +412,8 @@
 	}
 	
 	function resetQueue() {
-		fileQueue = [];
-		allResults = [];
-		currentUploadIndex = -1;
+		uploadQueueStore.resetQueue(queueKey);
+		abortControllers.clear();
 		error = null;
 	}
 	
@@ -311,63 +426,131 @@
 	async function startQueueUpload() {
 		if (fileQueue.length === 0) return;
 		
-		allResults = [];
+		// Clear previous results in the store
+		uploadQueueStore.clearResults(queueKey);
 		
 		for (let i = 0; i < fileQueue.length; i++) {
 			const item = fileQueue[i];
-			if (item.state === 'error') continue; // Skip files with validation errors
+			if (item.state === 'error' || item.state === 'completed') continue; // Skip files with validation errors or already completed
 			
-			currentUploadIndex = i;
-			item.state = 'preparing';
-			item.abortController = new AbortController();
-			item.error = null;
+			// Set up state via store
+			uploadQueueStore.setCurrentIndex(queueKey, i);
+			const controller = new AbortController();
+			abortControllers.set(item.id, controller);
+			
+			uploadQueueStore.updateFile(queueKey, item.id, {
+				state: 'preparing',
+				error: null
+			});
 			
 			try {
-				item.state = 'uploading';
+				uploadQueueStore.updateFile(queueKey, item.id, { state: 'uploading' });
 				
 				const uploadResult = await uploadFile(item.file, {
 					milestoneId,
 					chunkSize,
 					concurrency,
-					signal: item.abortController.signal,
+					signal: controller.signal,
 					onProgress: (p) => {
-						item.progress = p;
+						uploadQueueStore.updateFile(queueKey, item.id, { progress: p });
+					},
+					onRetry: (chunkIndex, attempt, maxRetries, err) => {
+						console.log(`[${item.file.name}] Retrying chunk ${chunkIndex}, attempt ${attempt}/${maxRetries}:`, err.message);
 					},
 					onError: (err, chunkIndex) => {
 						console.error(`Chunk ${chunkIndex} error:`, err);
 					}
 				});
 				
-				item.state = 'completed';
-				item.result = uploadResult;
-				allResults.push(uploadResult);
+				uploadQueueStore.updateFile(queueKey, item.id, {
+					state: 'completed',
+					result: uploadResult
+				});
+				uploadQueueStore.addResult(queueKey, uploadResult);
 				onUploadComplete?.(uploadResult);
 			} catch (err) {
 				if ((err as Error).message === 'Upload cancelled') {
-					item.state = 'idle';
+					uploadQueueStore.updateFile(queueKey, item.id, { state: 'idle' });
 				} else {
-					item.state = 'error';
-					item.error = (err as Error).message;
+					uploadQueueStore.updateFile(queueKey, item.id, {
+						state: 'error',
+						error: (err as Error).message
+					});
 					onUploadError?.(err as Error);
 				}
 			} finally {
-				item.abortController = null;
+				abortControllers.delete(item.id);
 			}
 		}
 		
-		currentUploadIndex = -1;
-		if (allResults.length > 0) {
-			onAllUploadsComplete?.(allResults);
+		uploadQueueStore.setCurrentIndex(queueKey, -1);
+		const finalResults = uploadQueueStore.getResults(queueKey);
+		if (finalResults.length > 0) {
+			onAllUploadsComplete?.(finalResults);
 		}
 	}
 	
 	async function cancelQueueUploads() {
-		for (const item of fileQueue) {
-			if (item.abortController) {
-				item.abortController.abort();
-			}
+		// Abort all in-progress uploads
+		for (const [id, controller] of abortControllers) {
+			controller.abort();
 		}
+		abortControllers.clear();
 		resetQueue();
+	}
+	
+	async function retryQueueItem(index: number) {
+		const item = fileQueue[index];
+		if (!item || item.state !== 'error') return;
+		
+		// Reset item state via store
+		const controller = new AbortController();
+		abortControllers.set(item.id, controller);
+		
+		uploadQueueStore.updateFile(queueKey, item.id, {
+			state: 'preparing',
+			error: null,
+			progress: null
+		});
+		
+		try {
+			uploadQueueStore.updateFile(queueKey, item.id, { state: 'uploading' });
+			
+			const uploadResult = await uploadFile(item.file, {
+				milestoneId,
+				chunkSize,
+				concurrency,
+				signal: controller.signal,
+				onProgress: (p) => {
+					uploadQueueStore.updateFile(queueKey, item.id, { progress: p });
+				},
+				onRetry: (chunkIndex, attempt, maxRetries, err) => {
+					console.log(`[${item.file.name}] Retrying chunk ${chunkIndex}, attempt ${attempt}/${maxRetries}:`, err.message);
+				},
+				onError: (err, chunkIndex) => {
+					console.error(`Chunk ${chunkIndex} error:`, err);
+				}
+			});
+			
+			uploadQueueStore.updateFile(queueKey, item.id, {
+				state: 'completed',
+				result: uploadResult
+			});
+			uploadQueueStore.addResult(queueKey, uploadResult);
+			onUploadComplete?.(uploadResult);
+		} catch (err) {
+			if ((err as Error).message === 'Upload cancelled') {
+				uploadQueueStore.updateFile(queueKey, item.id, { state: 'idle' });
+			} else {
+				uploadQueueStore.updateFile(queueKey, item.id, {
+					state: 'error',
+					error: (err as Error).message
+				});
+				onUploadError?.(err as Error);
+			}
+		} finally {
+			abortControllers.delete(item.id);
+		}
 	}
 
 	function getFilePreview(file: File): string | null {
@@ -403,7 +586,7 @@
 			</div>
 			
 			<div class="queue-list">
-				{#each fileQueue as item, index (index)}
+				{#each fileQueue as item, index (item.id)}
 					<div class="queue-item" class:uploading={item.state === 'uploading'} class:completed={item.state === 'completed'} class:error={item.state === 'error'}>
 						<div class="queue-item-info">
 							{#if getFilePreview(item.file)}
@@ -420,7 +603,20 @@
 							{#if item.state === 'completed'}
 								<span class="queue-item-status success">✓</span>
 							{:else if item.state === 'error'}
-								<span class="queue-item-status error" title={item.error ?? ''}>⚠️</span>
+								<div class="queue-item-actions">
+									<button 
+										type="button" 
+										class="queue-item-retry" 
+										onclick={() => retryQueueItem(index)}
+										title="Retry upload"
+									>↻</button>
+									<button 
+										type="button" 
+										class="queue-item-dismiss" 
+										onclick={() => dismissFailedItem(index)}
+										title="Dismiss"
+									>×</button>
+								</div>
 							{:else if item.state === 'uploading'}
 								<span class="queue-item-status uploading">{(item.progress?.progress ?? 0).toFixed(0)}%</span>
 							{:else if uploadingCount === 0}
@@ -431,6 +627,19 @@
 							<div class="queue-item-progress">
 								<div class="progress-fill" style="width: {item.progress.progress}%"></div>
 							</div>
+							<div class="queue-item-stats">
+								<span class="queue-stat bytes">{formatBytes(item.progress.bytesUploaded)} / {formatBytes(item.progress.totalBytes)}</span>
+								<span class="queue-stat speed">{formatBytes(item.progress.speed)}/s</span>
+								<span class="queue-stat eta">ETA: {formatDuration(item.progress.eta)}</span>
+								{#if item.progress.retryCount && item.progress.retryCount > 0}
+									<span class="queue-stat retry">↻ {item.progress.retryCount}</span>
+								{/if}
+							</div>
+						{/if}
+						{#if item.state === 'error' && item.error}
+							<div class="queue-item-error">
+								<span class="error-text">{item.error}</span>
+							</div>
 						{/if}
 					</div>
 				{/each}
@@ -438,8 +647,38 @@
 			
 			{#if queueCompleted}
 				<div class="queue-complete">
-					<p class="queue-complete-msg">✓ {completedCount} of {fileQueue.length} files uploaded</p>
-					<button type="button" class="btn-secondary" onclick={resetQueue}>Upload More Files</button>
+					{#if failedCount === 0}
+						<p class="queue-complete-msg success">✓ {completedCount} file{completedCount !== 1 ? 's' : ''} uploaded</p>
+						<button type="button" class="btn-secondary" onclick={resetQueue}>Upload More Files</button>
+					{:else if completedCount === 0}
+						<p class="queue-complete-msg error">✕ {failedCount} upload{failedCount !== 1 ? 's' : ''} failed</p>
+						<p class="queue-complete-hint">Dismiss failed files or retry them individually</p>
+						<div class="queue-complete-actions">
+							<label class="add-more-label">
+								<span class="btn-secondary" style="display: inline-block; padding: 0.5rem 1rem;">+ Add More Files</span>
+								<input
+									type="file"
+									{accept}
+									multiple
+									onchange={(e) => {
+										const files = (e.target as HTMLInputElement).files;
+										if (files) addMoreFiles(Array.from(files));
+										(e.target as HTMLInputElement).value = '';
+									}}
+									class="file-input"
+								/>
+							</label>
+						</div>
+					{:else}
+						<p class="queue-complete-msg partial">
+							✓ {completedCount} uploaded, ✕ {failedCount} failed
+						</p>
+						<div class="queue-complete-actions">
+							<button type="button" class="btn-secondary" onclick={clearCompletedFiles}>
+								Clear Completed
+							</button>
+						</div>
+					{/if}
 				</div>
 			{:else}
 				<div class="queue-actions">
@@ -450,10 +689,13 @@
 						<button type="button" class="btn-secondary" onclick={resetQueue}>Clear</button>
 					{:else}
 						<div class="queue-progress-summary">
-							<span>Uploading... {completedCount}/{fileQueue.length}</span>
+							<span>Uploading {completedCount + uploadingCount}/{fileQueue.length}</span>
 							<div class="progress-bar">
 								<div class="progress-fill" style="width: {totalQueueProgress}%"></div>
 							</div>
+							{#if wakeLock}
+								<span class="wake-lock-indicator" title="Screen will stay on during upload">🔒 Screen on</span>
+							{/if}
 						</div>
 						<button type="button" class="btn-danger" onclick={cancelQueueUploads}>Cancel All</button>
 					{/if}
@@ -472,8 +714,12 @@
 					{#if result.mimeType.startsWith('image/')}
 						<img src={result.url} alt={result.filename} class="preview-image" />
 					{:else if result.mimeType.startsWith('video/')}
-						<!-- svelte-ignore a11y_media_has_caption -->
-						<video src={result.url} controls class="preview-video"></video>
+						<VideoThumbnail
+							url={result.url}
+							thumbnailUrl={result.thumbnailUrl}
+							videoJobId={result.videoProcessingJobId}
+							playable={true}
+						/>
 					{/if}
 				</div>
 			{/if}
@@ -509,13 +755,14 @@
 				{/if}
 			</div>
 
-			{#if progress && uploadState !== 'idle'}}
+			{#if progress && uploadState !== 'idle'}
 				<!-- Progress Display -->
 				<div class="progress-container">
 					<div class="progress-bar">
 						<div
 							class="progress-fill"
 							class:paused={uploadState === 'paused'}
+							class:retrying={retryInfo !== null}
 							style="width: {progressPercent}%"
 						></div>
 					</div>
@@ -529,9 +776,18 @@
 							<span class="progress-eta">ETA: {formatDuration(progress.eta)}</span>
 						{/if}
 					</div>
-					<div class="chunk-info">
-						{progress.uploadedChunks.length} chunks uploaded
-					</div>
+					{#if retryInfo}
+						<div class="retry-info">
+							🔄 Retrying chunk (attempt {retryInfo.attempt}/{retryInfo.maxRetries})...
+						</div>
+					{:else}
+						<div class="chunk-info">
+							{progress.uploadedChunks.length} chunks uploaded
+							{#if progress.retryCount && progress.retryCount > 0}
+								<span class="retry-count">({progress.retryCount} retries)</span>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/if}
 
@@ -765,6 +1021,16 @@
 		background: var(--color-warning);
 	}
 
+	.progress-fill.retrying {
+		background: var(--color-warning);
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.6; }
+	}
+
 	.progress-stats {
 		display: flex;
 		flex-wrap: wrap;
@@ -782,6 +1048,18 @@
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		margin-top: 0.25rem;
+	}
+
+	.retry-info {
+		font-size: 0.75rem;
+		color: var(--color-warning);
+		margin-top: 0.25rem;
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.retry-count {
+		color: var(--color-text-muted);
+		margin-left: 0.25rem;
 	}
 
 	/* Error */
@@ -910,8 +1188,7 @@
 		margin: 1rem 0;
 	}
 
-	.preview-image,
-	.preview-video {
+	.preview-image {
 		max-width: 100%;
 		max-height: 300px;
 		border-radius: var(--radius-md);
@@ -1035,11 +1312,6 @@
 		color: var(--color-success);
 	}
 
-	.queue-item-status.error {
-		color: var(--color-error);
-		cursor: help;
-	}
-
 	.queue-item-status.uploading {
 		color: var(--color-primary);
 		font-weight: 500;
@@ -1065,11 +1337,94 @@
 		color: white;
 	}
 
+	.queue-item-retry {
+		width: 28px;
+		height: 28px;
+		border: none;
+		background: var(--color-warning);
+		color: white;
+		cursor: pointer;
+		font-size: 1rem;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		transition: background 0.2s;
+	}
+
+	.queue-item-retry:hover {
+		background: var(--color-primary);
+	}
+
+	.queue-item-actions {
+		display: flex;
+		gap: 0.25rem;
+		align-items: center;
+	}
+
+	.queue-item-dismiss {
+		width: 24px;
+		height: 24px;
+		border: none;
+		background: transparent;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-size: 1rem;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		transition: background 0.2s, color 0.2s;
+	}
+
+	.queue-item-dismiss:hover {
+		background: var(--color-error);
+		color: white;
+	}
+
+	.queue-item-error {
+		padding: 0.25rem 0.5rem;
+		margin-top: 0.25rem;
+		background: rgba(239, 68, 68, 0.1);
+		border-radius: var(--radius-sm);
+	}
+
+	.queue-item-error .error-text {
+		font-size: 0.75rem;
+		color: var(--color-error);
+		word-break: break-word;
+	}
+
 	.queue-item-progress {
 		height: 3px;
 		background: var(--color-bg-elevated);
 		border-radius: var(--radius-full);
 		overflow: hidden;
+	}
+
+	.queue-item-stats {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 0.75rem;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		margin-top: 0.25rem;
+	}
+
+	.queue-stat {
+		white-space: nowrap;
+	}
+
+	.queue-stat.bytes {
+		flex-basis: 100%;
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
+	}
+
+	.queue-stat.retry {
+		color: var(--color-warning);
 	}
 
 	.queue-actions {
@@ -1085,6 +1440,13 @@
 		color: var(--color-text-secondary);
 	}
 
+	.queue-progress-summary .wake-lock-indicator {
+		display: inline-block;
+		font-size: 0.625rem;
+		color: var(--color-text-muted);
+		margin-top: 0.25rem;
+	}
+
 	.queue-progress-summary .progress-bar {
 		margin-top: 0.25rem;
 		margin-bottom: 0;
@@ -1096,9 +1458,41 @@
 	}
 
 	.queue-complete-msg {
-		color: var(--color-success);
 		font-weight: 500;
 		margin-bottom: 0.5rem;
+	}
+
+	.queue-complete-msg.success {
+		color: var(--color-success);
+	}
+
+	.queue-complete-msg.error {
+		color: var(--color-error);
+	}
+
+	.queue-complete-msg.partial {
+		color: var(--color-warning);
+	}
+
+	.queue-complete-hint {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		margin-bottom: 0.5rem;
+	}
+
+	.queue-complete-actions {
+		display: flex;
+		gap: 0.5rem;
+		justify-content: center;
+	}
+
+	.add-more-label {
+		display: inline-block;
+		cursor: pointer;
+	}
+
+	.add-more-label .file-input {
+		display: none;
 	}
 
 	/* Mobile */
@@ -1128,6 +1522,94 @@
 		.btn-danger {
 			width: 100%;
 			text-align: center;
+		}
+
+		/* Queue item mobile optimizations */
+		.queue-item {
+			padding: 0.625rem;
+		}
+
+		.queue-item-info {
+			gap: 0.375rem;
+		}
+
+		.queue-thumb,
+		.queue-icon {
+			width: 28px;
+			height: 28px;
+			flex-shrink: 0;
+		}
+
+		.queue-item-name {
+			font-size: 0.8125rem;
+		}
+
+		.queue-item-size {
+			font-size: 0.6875rem;
+		}
+
+		.queue-item-stats {
+			display: grid;
+			grid-template-columns: 1fr auto auto;
+			gap: 0.25rem 0.5rem;
+			align-items: center;
+		}
+
+		.queue-stat.bytes {
+			grid-column: 1 / -1;
+			font-size: 0.6875rem;
+		}
+
+		.queue-stat.speed,
+		.queue-stat.eta {
+			font-size: 0.625rem;
+		}
+
+		.queue-stat.retry {
+			grid-column: 3;
+			font-size: 0.625rem;
+		}
+
+		/* Queue header mobile */
+		.queue-header {
+			flex-wrap: wrap;
+			gap: 0.5rem;
+		}
+
+		.queue-count {
+			font-size: 0.875rem;
+		}
+
+		.add-more-btn {
+			font-size: 0.8125rem;
+		}
+
+		/* Queue actions mobile */
+		.queue-actions {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.queue-progress-summary {
+			width: 100%;
+			font-size: 0.8125rem;
+		}
+
+		.queue-actions .btn-primary,
+		.queue-actions .btn-secondary,
+		.queue-actions .btn-danger {
+			width: 100%;
+			justify-content: center;
+		}
+
+		/* Queue complete mobile */
+		.queue-complete-actions {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.queue-complete-actions .btn-secondary {
+			width: 100%;
 		}
 	}
 </style>

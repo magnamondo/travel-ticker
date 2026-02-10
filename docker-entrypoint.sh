@@ -6,11 +6,11 @@ echo "   Node version: $(node --version)"
 echo "   Database: ${DATABASE_URL:-data/db/database.db}"
 
 # Ensure data directories exist (db separate from uploads for security)
-mkdir -p /app/data/db /app/data/uploads
+mkdir -p /app/data/db /app/data/uploads /app/data/logs
 
-# Run database migrations
+# Run database migrations (using migrate, not push, to avoid destructive changes)
 echo "📦 Running database migrations..."
-if ! npx drizzle-kit push --force; then
+if ! npx drizzle-kit migrate; then
     echo "⚠️  Migration warning (may be OK if no changes needed)"
 fi
 
@@ -32,9 +32,10 @@ if ! check_process $WORKER_PID; then
 fi
 echo "   Worker PID: $WORKER_PID"
 
-# Start the HTTP server
+# Start the HTTP server with crash detection wrapper
+# Limit Node.js heap to 4GB (container has 5GB, leave room for system + worker)
 echo "🌐 Starting HTTP server on port ${PORT:-3000}..."
-node build &
+NODE_OPTIONS="--max-old-space-size=4096" node scripts/server-wrapper.mjs &
 SERVER_PID=$!
 
 # Give server a moment to start
@@ -103,7 +104,9 @@ while true; do
     # Check server
     if ! check_process $SERVER_PID; then
         SERVER_FAILURES=$((SERVER_FAILURES + 1))
-        echo "⚠️  HTTP server died (failure $SERVER_FAILURES/$MAX_FAILURES)"
+        CRASH_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        echo "⚠️  HTTP server died at $CRASH_TIME (failure $SERVER_FAILURES/$MAX_FAILURES)"
+        echo "{\"timestamp\":\"$CRASH_TIME\",\"event\":\"server_crash\",\"failure\":$SERVER_FAILURES,\"max_failures\":$MAX_FAILURES}" >> /app/data/logs/crash.log 2>/dev/null || true
         
         if [ $SERVER_FAILURES -ge $MAX_FAILURES ]; then
             echo "❌ Server exceeded max failures, exiting"
@@ -112,7 +115,7 @@ while true; do
         
         echo "🔄 Restarting HTTP server..."
         sleep $((SERVER_FAILURES * 2))  # Exponential backoff
-        node build &
+        NODE_OPTIONS="--max-old-space-size=4096" node scripts/server-wrapper.mjs &
         SERVER_PID=$!
         echo "   New server PID: $SERVER_PID"
     else

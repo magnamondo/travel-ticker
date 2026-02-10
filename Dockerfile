@@ -35,6 +35,8 @@ COPY --from=builder /app/src/worker src/worker/
 # Copy db schema for drizzle-kit migrations
 COPY --from=builder /app/src/lib/server/db src/lib/server/db/
 COPY --from=builder /app/tsconfig.json ./
+# Copy utility scripts
+COPY --from=builder /app/scripts scripts/
 
 # Install production dependencies plus tools needed for runtime
 # - tsx: for running the video worker TypeScript

@@ -2,11 +2,18 @@ import type { PageServerLoad, Actions } from './$types';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { milestone, segment, milestoneMedia, comment, reaction, userProfile } from '$lib/server/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { canComment, canReact } from '$lib/roles';
+import { canUserAccessMilestone } from '$lib/server/groups';
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) => {
+	// Cache the entry page for 1 hour, but allow invalidation via 'entry-[id]' tag
+	setHeaders({
+		'Cache-Control': 'public, max-age=3600',
+		'Surrogate-Key': `entry-${params.id}`
+	});
+
 	// Fetch milestone with segment
 	const milestoneResult = await db
 		.select({
@@ -16,8 +23,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			date: milestone.date,
 			avatar: milestone.avatar,
 			meta: milestone.meta,
+			segmentId: segment.id,
 			segmentName: segment.name,
-			segmentIcon: segment.icon
+			segmentIcon: segment.icon,
 		})
 		.from(milestone)
 		.innerJoin(segment, eq(milestone.segmentId, segment.id))
@@ -26,6 +34,16 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	if (!milestoneResult) {
 		throw error(404, 'Entry not found');
+	}
+
+	// Check if user has access to this milestone
+	const hasAccess = await canUserAccessMilestone(
+		locals.user?.id ?? null,
+		milestoneResult.id,
+		locals.user?.roles
+	);
+	if (!hasAccess) {
+		throw error(403, 'You do not have access to this entry');
 	}
 
 	// Fetch media for milestone
@@ -39,18 +57,17 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	const comments = await db
 		.select()
 		.from(comment)
-		.where(eq(comment.milestoneId, params.id))
-		.orderBy(comment.createdAt);
+		.where(eq(comment.milestoneId, params.id));
 
 	// Fetch reactions for milestone
-	const reactions = await db
+	const milestoneReactions = await db
 		.select()
 		.from(reaction)
 		.where(eq(reaction.milestoneId, params.id));
 
-	// Group reactions by emoji
+	// Group milestone reactions by emoji
 	const reactionCounts: Record<string, { count: number; userReacted: boolean }> = {};
-	for (const r of reactions) {
+	for (const r of milestoneReactions) {
 		if (!reactionCounts[r.emoji]) {
 			reactionCounts[r.emoji] = { count: 0, userReacted: false };
 		}
@@ -59,6 +76,47 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			reactionCounts[r.emoji].userReacted = true;
 		}
 	}
+
+	// Fetch reactions for all comments
+	const commentIds = comments.map(c => c.id);
+	const allCommentReactions = [];
+	for (const commentId of commentIds) {
+		const reactions = await db
+			.select()
+			.from(reaction)
+			.where(eq(reaction.commentId, commentId));
+		allCommentReactions.push(...reactions);
+	}
+
+	// Group comment reactions by commentId then by emoji
+	const commentReactionsByComment: Record<string, Record<string, { count: number; userReacted: boolean }>> = {};
+	for (const r of allCommentReactions) {
+		if (!r.commentId) continue;
+		if (!commentReactionsByComment[r.commentId]) {
+			commentReactionsByComment[r.commentId] = {};
+		}
+		if (!commentReactionsByComment[r.commentId][r.emoji]) {
+			commentReactionsByComment[r.commentId][r.emoji] = { count: 0, userReacted: false };
+		}
+		commentReactionsByComment[r.commentId][r.emoji].count++;
+		if (locals.user && r.userId === locals.user.id) {
+			commentReactionsByComment[r.commentId][r.emoji].userReacted = true;
+		}
+	}
+
+	// Calculate total reaction count per comment
+	const getReactionCount = (commentId: string): number => {
+		const reactions = commentReactionsByComment[commentId];
+		if (!reactions) return 0;
+		return Object.values(reactions).reduce((sum, r) => sum + r.count, 0);
+	};
+
+	// Sort comments by reaction count (desc), then by createdAt (desc)
+	comments.sort((a, b) => {
+		const countDiff = getReactionCount(b.id) - getReactionCount(a.id);
+		if (countDiff !== 0) return countDiff;
+		return b.createdAt.getTime() - a.createdAt.getTime();
+	});
 
 	// Get user display name if logged in
 	let userDisplayName: string | null = null;
@@ -79,6 +137,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	}
 
 	return {
+		origin: url.origin,
 		milestone: {
 			id: milestoneResult.id,
 			title: milestoneResult.title,
@@ -105,7 +164,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			milestoneId: c.milestoneId,
 			authorName: c.authorName,
 			content: c.content,
-			createdAt: c.createdAt.toISOString()
+			createdAt: c.createdAt.toISOString(),
+			reactions: commentReactionsByComment[c.id] || {}
 		})),
 		user: locals.user ? {
 			id: locals.user.id,
@@ -128,11 +188,18 @@ export const actions: Actions = {
 		}
 
 		const formData = await request.formData();
-		const content = formData.get('content')?.toString().trim();
+		let content = formData.get('content')?.toString().trim();
 
 		if (!content) {
 			return fail(400, { error: 'Comment is required', content: '' });
 		}
+
+		// Sanitize content:
+		// - Strip HTML tags
+		// - Limit consecutive line breaks to 2
+		content = content
+			.replace(/<[^>]*>/g, '')
+			.replace(/\n{3,}/g, '\n\n');
 
 		// Get author name from profile or email
 		const profile = await db

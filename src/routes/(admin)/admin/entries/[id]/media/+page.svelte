@@ -12,7 +12,7 @@
 	async function handleUploadComplete(result: UploadResult) {
 		// Create a form and submit it to add the media
 		const mediaType = result.mimeType.startsWith('video/') ? 'video' : 'image';
-		
+
 		const formData = new FormData();
 		formData.append('type', mediaType);
 		formData.append('url', result.url);
@@ -24,6 +24,10 @@
 			body: formData
 		});
 
+		// Don't hide uploader or invalidate here - wait for all uploads to complete
+	}
+
+	async function handleAllUploadsComplete() {
 		showUploader = false;
 		await invalidateAll();
 	}
@@ -52,7 +56,7 @@
 						<span class="play-icon">▶</span>
 					</div>
 				{:else}
-					<img src={item.url} alt="" class="media-thumbnail" />
+					<img src={item.thumbnailUrl || item.url} alt="" class="media-thumbnail" />
 				{/if}
 				<div class="media-info">
 					<span class="media-type">{item.type}</span>
@@ -94,10 +98,11 @@
 
 		{#if showUploader}
 			<div class="uploader-container">
-				<ChunkedUploader 
+				<ChunkedUploader
 					milestoneId={data.milestone.id}
 					accept="image/*,video/*"
 					onUploadComplete={handleUploadComplete}
+					onAllUploadsComplete={handleAllUploadsComplete}
 				/>
 			</div>
 		{:else if showUrlForm}

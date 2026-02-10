@@ -1,16 +1,26 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { untrack } from 'svelte';
 	import { ROLES, getRoleLabel } from '$lib/roles';
 	import { toasts } from '$lib/stores/toast.svelte';
 
 	let { data, form } = $props();
 
+	// Track last shown toast to avoid duplicates
+	let lastToastMessage = $state<string | null>(null);
+
 	// Show toast when form result changes
 	$effect(() => {
-		if (form?.success && form?.message) {
-			toasts.success(form.message);
-		} else if (form?.error) {
-			toasts.error(form.error);
+		const message = form?.success ? form?.message : form?.error;
+		const lastShown = untrack(() => lastToastMessage);
+		
+		if (message && message !== lastShown) {
+			lastToastMessage = message;
+			if (form?.success) {
+				toasts.success(message);
+			} else {
+				toasts.error(message);
+			}
 		}
 	});
 
@@ -19,6 +29,16 @@
 	let showPasswordModal = $state<string | null>(null);
 	let newPassword = $state('');
 	let searchQuery = $state('');
+	let openMenuId = $state<string | null>(null);
+
+	function toggleMenu(userId: string, event: MouseEvent) {
+		event.stopPropagation();
+		openMenuId = openMenuId === userId ? null : userId;
+	}
+
+	function closeMenu() {
+		openMenuId = null;
+	}
 
 	function formatDate(date: Date | null) {
 		if (!date) return '—';
@@ -112,7 +132,7 @@
 			</thead>
 			<tbody>
 				{#each filteredUsers as user (user.id)}
-					<tr>
+					<tr class:menu-open={openMenuId === user.id}>
 						<td class="user-cell">
 							<div class="user-avatar">
 								{getDisplayName(user).charAt(0).toUpperCase()}
@@ -132,27 +152,77 @@
 						</td>
 						<td class="date-cell">{formatDate(user.createdAt)}</td>
 						<td class="actions-cell">
-							<button class="btn-icon" title="Edit" onclick={() => (editingUserId = user.id)}>✏️</button>
-							<button class="btn-icon" title="Reset Password" onclick={() => (showPasswordModal = user.id)}>🔑</button>
-							{#if !user.emailVerified}
-								<form method="POST" action="?/verifyEmail" use:enhance class="inline">
-									<input type="hidden" name="userId" value={user.id} />
-									<button type="submit" class="btn-icon" title="Verify Email">✅</button>
-								</form>
-							{/if}
-							<form method="POST" action="?/revokeAllSessions" use:enhance class="inline">
-								<input type="hidden" name="userId" value={user.id} />
-								<button type="submit" class="btn-icon" title="Revoke Sessions">🔐</button>
-							</form>
-							<form method="POST" action="?/delete" use:enhance class="inline">
-								<input type="hidden" name="userId" value={user.id} />
-								<button 
-									type="submit" 
-									class="btn-icon danger" 
-									title="Delete"
-									onclick={(e) => { if (!confirm(`Delete user ${user.email}?`)) e.preventDefault(); }}
-								>🗑️</button>
-							</form>
+							<div class="actions-wrapper">
+								<button class="btn-edit" onclick={() => (editingUserId = user.id)}>
+									Edit
+								</button>
+								<div class="dropdown">
+									<button 
+										class="btn-menu" 
+										onclick={(e) => toggleMenu(user.id, e)}
+										aria-label="More actions"
+									>
+										<svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="10" r="2"/><circle cx="10" cy="10" r="2"/><circle cx="16" cy="10" r="2"/></svg>
+									</button>
+									{#if openMenuId === user.id}
+										<button class="dropdown-backdrop" onclick={closeMenu} aria-label="Close menu"></button>
+										<div class="dropdown-menu">
+											<div class="dropdown-header">{getDisplayName(user)}</div>
+											<button class="dropdown-item" onclick={() => { closeMenu(); showPasswordModal = user.id; }}>
+												<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 7a5 5 0 113.61 4.804l-1.903 1.903A1 1 0 019 14H8v1a1 1 0 01-1 1H6v1a1 1 0 01-1 1H3a1 1 0 01-1-1v-2a1 1 0 01.293-.707L8.196 8.39A5.002 5.002 0 018 7zm5-3a.75.75 0 000 1.5A1.5 1.5 0 0114.5 7 .75.75 0 0016 7a3 3 0 00-3-3z" clip-rule="evenodd"/></svg>
+												Reset password
+											</button>
+											{#if !user.emailVerified}
+												<form method="POST" action="?/verifyEmail" use:enhance={() => {
+													return async ({ update }) => {
+														closeMenu();
+														await update();
+													};
+												}}>
+													<input type="hidden" name="userId" value={user.id} />
+													<button type="submit" class="dropdown-item">
+														<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clip-rule="evenodd"/></svg>
+														Verify email
+													</button>
+												</form>
+											{/if}
+											<form method="POST" action="?/revokeAllSessions" use:enhance={() => {
+												return async ({ update }) => {
+													closeMenu();
+													await update();
+												};
+											}}>
+												<input type="hidden" name="userId" value={user.id} />
+												<button 
+													type="submit" 
+													class="dropdown-item"
+													onclick={(e) => { if (!confirm(`Revoke all sessions for ${user.email}? They will be logged out everywhere.`)) e.preventDefault(); }}
+												>
+													<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a8 8 0 100 16 8 8 0 000-16zM6.39 6.39a.75.75 0 011.06 0L10 8.94l2.55-2.55a.75.75 0 111.06 1.06L11.06 10l2.55 2.55a.75.75 0 11-1.06 1.06L10 11.06l-2.55 2.55a.75.75 0 01-1.06-1.06L8.94 10 6.39 7.45a.75.75 0 010-1.06z" clip-rule="evenodd"/></svg>
+													Revoke sessions
+												</button>
+											</form>
+											<div class="dropdown-divider"></div>
+											<form method="POST" action="?/delete" use:enhance={() => {
+												return async ({ update }) => {
+													closeMenu();
+													await update();
+												};
+											}}>
+												<input type="hidden" name="userId" value={user.id} />
+												<button 
+													type="submit" 
+													class="dropdown-item danger"
+													onclick={(e) => { if (!confirm(`Delete user ${user.email}? This cannot be undone.`)) e.preventDefault(); }}
+												>
+													<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/></svg>
+													Delete user
+												</button>
+											</form>
+										</div>
+									{/if}
+								</div>
+							</div>
 						</td>
 					</tr>
 				{/each}
@@ -425,7 +495,7 @@
 	.table-container {
 		background: var(--color-bg-elevated);
 		border-radius: var(--radius-md);
-		overflow: hidden;
+		overflow: visible;
 	}
 
 	.users-table {
@@ -548,33 +618,131 @@
 	}
 
 	.actions-cell {
-		display: flex;
-		gap: 0.25rem;
-		flex-wrap: wrap;
+		width: 140px;
 	}
 
-	.btn-icon {
-		width: 28px;
-		height: 28px;
-		padding: 0;
+	.actions-wrapper {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.btn-edit {
+		padding: 0.375rem 0.75rem;
 		background: transparent;
-		border: none;
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
-		font-size: 0.875rem;
-		transition: background 0.15s;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-text);
+		transition: all 0.15s;
 	}
 
-	.btn-icon:hover {
+	.btn-edit:hover {
+		background: var(--color-bg-hover);
+		border-color: var(--color-text-muted);
+	}
+
+	.dropdown {
+		position: relative;
+	}
+
+	.btn-menu {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		color: var(--color-text-muted);
+		transition: all 0.15s;
+	}
+
+	.btn-menu:hover {
+		background: var(--color-bg-hover);
+		border-color: var(--color-border);
+		color: var(--color-text);
+	}
+
+	.btn-menu svg {
+		width: 16px;
+		height: 16px;
+	}
+
+	.dropdown-backdrop {
+		position: fixed;
+		inset: 0;
+		background: transparent;
+		border: none;
+		cursor: default;
+		z-index: 99;
+	}
+
+	.dropdown-menu {
+		position: absolute;
+		top: 100%;
+		right: 0;
+		margin-top: 0.25rem;
+		min-width: 180px;
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+		z-index: 100;
+		overflow: hidden;
+	}
+
+	.dropdown-menu form {
+		display: contents;
+	}
+
+	.dropdown-item {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		width: 100%;
+		padding: 0.625rem 0.875rem;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		font-size: 0.8125rem;
+		color: var(--color-text);
+		text-align: left;
+		transition: background 0.1s;
+	}
+
+	.dropdown-item:hover {
 		background: var(--color-bg-hover);
 	}
 
-	.btn-icon.danger:hover {
-		background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+	.dropdown-item svg {
+		width: 16px;
+		height: 16px;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
 	}
 
-	.inline {
-		display: inline;
+	.dropdown-item.danger {
+		color: var(--color-danger);
+	}
+
+	.dropdown-item.danger svg {
+		color: var(--color-danger);
+	}
+
+	.dropdown-divider {
+		height: 1px;
+		background: var(--color-border);
+		margin: 0.25rem 0;
+	}
+
+	.dropdown-header {
+		display: none;
 	}
 
 	.empty-state {
@@ -704,16 +872,153 @@
 			align-items: stretch;
 		}
 
+		/* Card-based layout for mobile */
 		.table-container {
-			overflow-x: auto;
+			background: transparent;
 		}
 
 		.users-table {
-			min-width: 600px;
+			display: block;
+		}
+
+		.users-table thead {
+			display: none;
+		}
+
+		.users-table tbody {
+			display: flex;
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+
+		.users-table tr {
+			display: flex;
+			flex-direction: column;
+			background: var(--color-bg-elevated);
+			border-radius: var(--radius-md);
+			padding: 1rem;
+			gap: 0.75rem;
+		}
+
+		.users-table td {
+			padding: 0;
+			border: none;
+		}
+
+		.user-cell {
+			gap: 0.75rem;
+		}
+
+		.user-avatar {
+			width: 40px;
+			height: 40px;
+			font-size: 1rem;
+		}
+
+		.user-name {
+			font-size: 1rem;
+		}
+
+		.email-cell {
+			font-size: 0.8125rem;
+			word-break: break-all;
+		}
+
+		.users-table td:nth-child(3),
+		.users-table td:nth-child(4) {
+			display: inline-flex;
+		}
+
+		/* Put status and role badges inline */
+		.users-table tr > td:nth-child(3) {
+			position: absolute;
+			top: 1rem;
+			right: 1rem;
+		}
+
+		.users-table tr {
+			position: relative;
+		}
+
+		.users-table td:nth-child(4) {
+			order: -1;
+			margin-top: -0.25rem;
+		}
+
+		.date-cell {
+			font-size: 0.75rem;
+			opacity: 0.7;
+		}
+
+		.date-cell::before {
+			content: 'Joined ';
+		}
+
+		.actions-cell {
+			width: auto;
+			padding-top: 0.75rem;
+			border-top: 1px solid var(--color-border);
+			margin-top: 0.25rem;
+		}
+
+		.btn-edit {
+			padding: 0.5rem 1rem;
+			font-size: 0.875rem;
+		}
+
+		.btn-menu {
+			width: 40px;
+			height: 40px;
+		}
+
+		.dropdown-menu {
+			position: fixed;
+			bottom: 1rem;
+			left: 1rem;
+			right: 1rem;
+			top: auto;
+			min-width: auto;
+			margin-top: 0;
+			border-radius: var(--radius-lg);
+			box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+		}
+
+		.dropdown-backdrop {
+			background: rgba(0, 0, 0, 0.4);
+		}
+
+		.dropdown-item {
+			padding: 0.75rem 1rem;
+			font-size: 0.875rem;
+		}
+
+		.dropdown-header {
+			display: block;
+			padding: 0.875rem 1rem 0.625rem;
+			font-weight: 600;
+			font-size: 0.9375rem;
+			color: var(--color-text);
+			border-bottom: 1px solid var(--color-border);
+		}
+
+		.users-table tr.menu-open {
+			background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-elevated));
+			box-shadow: inset 0 0 0 2px var(--color-primary);
+		}
+
+		.empty-state {
+			background: var(--color-bg-elevated);
+			border-radius: var(--radius-md);
+			padding: 2rem 1rem !important;
 		}
 
 		.form-row {
 			grid-template-columns: 1fr;
+		}
+
+		.modal {
+			padding: 1.25rem;
+			max-height: 85vh;
 		}
 	}
 </style>

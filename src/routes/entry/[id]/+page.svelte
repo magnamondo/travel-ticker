@@ -4,6 +4,7 @@
 	import Reactions from '$lib/components/Reactions.svelte';
 	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
 	import { getMapsUrl } from '$lib/maps';
+	import { toasts } from '$lib/stores/toast.svelte';
 
 	type ReactionCount = {
 		emoji: string;
@@ -15,7 +16,21 @@
 
 	let content = $state('');
 	let submitting = $state(false);
-	let commentReactions = new SvelteMap<string, ReactionCount[]>();
+	let commentReactionsOverrides = new SvelteMap<string, ReactionCount[]>();
+	let commentsListEl: HTMLUListElement | null = $state(null);
+	let highlightedCommentId = $state<string | null>(null);
+
+	// Get reactions for a comment - use override if set, otherwise use server data
+	function getCommentReactions(commentId: string): ReactionCount[] {
+		if (commentReactionsOverrides.has(commentId)) {
+			return commentReactionsOverrides.get(commentId)!;
+		}
+		const comment = data.comments.find(c => c.id === commentId);
+		if (comment?.reactions) {
+			return formatReactions(comment.reactions, data.user?.id);
+		}
+		return [];
+	}
 
 	// Reactions state - can be null to indicate "use server data", or overridden after user action
 	let localMilestoneReactions = $state<ReactionCount[] | null>(null);
@@ -57,7 +72,12 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			localMilestoneReactions = formatReactionsFromApi(reactions, data.user?.id);
+			const formatted = formatReactionsFromApi(reactions, data.user?.id);
+			localMilestoneReactions = formatted;
+			const userReacted = formatted.find(r => r.emoji === emoji)?.userReacted ?? false;
+			toasts.success(`${emoji} ${userReacted ? 'added' : 'removed'}`);
+		} else {
+			toasts.error('Failed to update reaction');
 		}
 	}
 
@@ -69,7 +89,12 @@
 		});
 		if (res.ok) {
 			const { reactions } = await res.json();
-			commentReactions.set(commentId, formatReactionsFromApi(reactions, data.user?.id));
+			const formatted = formatReactionsFromApi(reactions, data.user?.id);
+			commentReactionsOverrides.set(commentId, formatted);
+			const userReacted = formatted.find(r => r.emoji === emoji)?.userReacted ?? false;
+			toasts.success(`${emoji} ${userReacted ? 'added' : 'removed'}`);
+		} else {
+			toasts.error('Failed to update reaction');
 		}
 	}
 
@@ -80,10 +105,39 @@
 			userReacted: userId ? r.userIds.includes(userId) : false
 		}));
 	}
+
+	// Combine images and videos into a single media array for lightbox
+	type MediaItem = { type: 'image' | 'video'; url: string; thumbnailUrl?: string };
+	const mediaItems = $derived<MediaItem[]>([
+		...(data.milestone.images ?? []).map((url: string) => ({ type: 'image' as const, url })),
+		...(data.milestone.videos ?? []).map((v) => ({
+			type: 'video' as const,
+			url: v.url,
+			thumbnailUrl: v.thumbnailUrl ?? undefined
+		}))
+	]);
+
+	// Compute absolute OG image URL
+	const ogImageUrl = $derived.by(() => {
+		const imageUrl = data.milestone.images?.[0];
+		if (!imageUrl) return data.origin + '/logo.jpg';
+		return imageUrl.startsWith('/') ? data.origin + imageUrl : imageUrl;
+	});
 </script>
 
 <svelte:head>
-	<title>{data.milestone.title} | Toulouse - Tsévié | Travel Ticker | Magnamondo</title>
+	<title>{data.milestone.title} | Toulouse - Lomé | Travel Ticker | Magnamondo</title>
+	<meta property="og:type" content="article">
+	<meta property="og:title" content="{data.milestone.title} | Travel Ticker">
+	<meta property="og:description" content={data.milestone.description?.slice(0, 160) ?? 'A moment from our journey'}>
+	<meta property="og:image" content={ogImageUrl}>
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+	<meta property="og:url" content="{data.origin}/entry/{data.milestone.id}">
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="{data.milestone.title} | Travel Ticker">
+	<meta name="twitter:description" content={data.milestone.description?.slice(0, 160) ?? 'A moment from our journey'}>
+	<meta name="twitter:image" content={ogImageUrl}>
 </svelte:head>
 
 <div class="entry-page">
@@ -112,17 +166,36 @@
 				<img src={data.milestone.avatar} alt="" class="avatar" />
 			{/if}
 			<h1>{data.milestone.title}</h1>
-			<p class="description">{data.milestone.description}</p>
+			<p class="description">{@html (data.milestone.description ?? '')
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/\n/g, '<br>')}</p>
 
-			{#if data.milestone.images?.length}
-				<div class="images">
-					{#each data.milestone.images as image, i (i)}
+			{#if mediaItems.length > 0}
+				<div class="media-grid">
+					{#each mediaItems as item, i (i)}
 						<button
-							class="image-button"
+							class="media-button"
 							onclick={() => openLightbox(i)}
-							aria-label="View image {i + 1} fullscreen"
+							aria-label="View {item.type} {i + 1} fullscreen"
 						>
-							<img src={image} alt="" class="entry-image" />
+							{#if item.type === 'video'}
+								<div class="video-thumbnail">
+									{#if item.thumbnailUrl}
+										<img src={item.thumbnailUrl} alt="" class="entry-media" />
+									{:else}
+										<div class="video-placeholder"></div>
+									{/if}
+									<div class="play-icon">
+										<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="white">
+											<path d="M8 5v14l11-7z"/>
+										</svg>
+									</div>
+								</div>
+							{:else}
+								<img src={item.url} alt="" class="entry-media" />
+							{/if}
 						</button>
 					{/each}
 				</div>
@@ -180,22 +253,35 @@
 					method="POST"
 					use:enhance={() => {
 						submitting = true;
-						return async ({ update }) => {
+						return async ({ update, result }) => {
 							await update();
 							submitting = false;
-							if (form?.success) {
+							if (result.type === 'success') {
 								content = '';
+								toasts.success('Comment added!');
+								// Scroll to the newest comment (by date) and highlight it
+								setTimeout(() => {
+									if (!data.comments.length) return;
+									// Find the newest comment
+									const newest = data.comments.reduce((a, b) => 
+										new Date(a.createdAt) > new Date(b.createdAt) ? a : b
+									);
+									highlightedCommentId = newest.id;
+									const commentEl = commentsListEl?.querySelector(`[data-comment-id="${newest.id}"]`);
+									commentEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+									// Remove highlight after animation
+									setTimeout(() => {
+										highlightedCommentId = null;
+									}, 4000);
+								}, 100);
+							} else if (result.type === 'failure') {
+								const errorMsg = (result.data as { error?: string })?.error ?? 'Failed to add comment';
+								toasts.error(errorMsg);
 							}
 						};
 					}}
 					class="comment-form"
 				>
-					{#if form?.error}
-						<div class="error-message">{form.error}</div>
-					{/if}
-					{#if form?.success}
-						<div class="success-message">Comment added!</div>
-					{/if}
 					<div class="posting-as">
 						Posting as <strong>{data.user.displayName}</strong>
 					</div>
@@ -230,19 +316,23 @@
 		{/if}
 
 		{#if data.comments.length > 0}
-			<ul class="comments-list">
+			<ul class="comments-list" bind:this={commentsListEl}>
 				{#each data.comments as comment (comment.id)}
-					<li class="comment">
+					<li class="comment" class:comment-highlight={highlightedCommentId === comment.id} data-comment-id={comment.id}>
 						<div class="comment-header">
 							<span class="comment-author">{comment.authorName}</span>
 							<time class="comment-date" datetime={comment.createdAt}>
 								{new Date(comment.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
 							</time>
 						</div>
-						<p class="comment-content">{comment.content}</p>
+						<p class="comment-content">{@html comment.content
+							.replace(/&/g, '&amp;')
+							.replace(/</g, '&lt;')
+							.replace(/>/g, '&gt;')
+							.replace(/\n/g, '<br>')}</p>
 						<div class="comment-reactions">
 							<Reactions
-								reactions={commentReactions.get(comment.id) || []}
+								reactions={getCommentReactions(comment.id)}
 								targetType="comment"
 								targetId={comment.id}
 								isLoggedIn={!!data.user}
@@ -259,9 +349,9 @@
 	</section>
 </div>
 
-{#if data.milestone.images?.length}
+{#if mediaItems.length > 0}
 	<ImageLightbox
-		images={data.milestone.images}
+		media={mediaItems}
 		currentIndex={lightboxIndex}
 		open={lightboxOpen}
 		onclose={closeLightbox}
@@ -357,19 +447,19 @@
 
 	.description {
 		font-size: 1rem;
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 		line-height: 1.6;
 		margin: 0 0 1.5rem 0;
 	}
 
-	.images {
+	.media-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 		gap: 1rem;
 		margin-bottom: 1.5rem;
 	}
 
-	.image-button {
+	.media-button {
 		padding: 0;
 		border: none;
 		background: none;
@@ -379,17 +469,52 @@
 		transition: transform 0.2s, box-shadow 0.2s;
 	}
 
-	.image-button:hover {
+	.media-button:hover {
 		transform: scale(1.02);
 		box-shadow: var(--shadow-lg);
 	}
 
-	.entry-image {
+	.entry-media {
 		width: 100%;
 		border-radius: var(--radius-md);
 		object-fit: cover;
 		aspect-ratio: 4/3;
 		display: block;
+	}
+
+	.video-thumbnail {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 4/3;
+		background: var(--color-bg-secondary);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.video-placeholder {
+		width: 100%;
+		height: 100%;
+		background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary, #333) 100%);
+	}
+
+	.play-icon {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 64px;
+		height: 64px;
+		background: rgba(0, 0, 0, 0.6);
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: background 0.2s;
+	}
+
+	.media-button:hover .play-icon {
+		background: rgba(0, 0, 0, 0.8);
 	}
 
 	.meta {
@@ -527,22 +652,6 @@
 		cursor: not-allowed;
 	}
 
-	.error-message {
-		padding: 0.75rem 1rem;
-		background: color-mix(in srgb, var(--color-error) 15%, transparent);
-		color: var(--color-error);
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-	}
-
-	.success-message {
-		padding: 0.75rem 1rem;
-		background: color-mix(in srgb, var(--color-success) 15%, transparent);
-		color: var(--color-success);
-		border-radius: var(--radius-md);
-		font-size: 0.875rem;
-	}
-
 	.permission-notice {
 		padding: 1rem;
 		background: var(--color-bg);
@@ -565,6 +674,22 @@
 		padding: 1rem;
 		background: var(--color-bg);
 		border-radius: var(--radius-md);
+		transition: box-shadow 0.3s ease, background-color 0.3s ease;
+	}
+
+	.comment-highlight {
+		animation: highlight-pulse 4s ease-out;
+	}
+
+	@keyframes highlight-pulse {
+		0% {
+			box-shadow: 0 0 0 3px var(--color-primary);
+			background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
+		}
+		100% {
+			box-shadow: 0 0 0 0 transparent;
+			background: var(--color-bg);
+		}
 	}
 
 	.comment-header {
@@ -627,7 +752,7 @@
 			font-size: 1.25rem;
 		}
 
-		.images {
+		.media-grid {
 			grid-template-columns: 1fr;
 		}
 	}

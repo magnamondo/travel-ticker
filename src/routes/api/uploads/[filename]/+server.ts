@@ -1,8 +1,10 @@
 import { error } from '@sveltejs/kit';
+import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
-import { readFile, stat, realpath } from 'fs/promises';
-import { join, resolve } from 'path';
-import { existsSync } from 'fs';
+import { stat, realpath } from 'fs/promises';
+import { createReadStream, existsSync } from 'fs';
+import { join } from 'path';
+import { Readable } from 'stream';
 
 // Use data directory for persistence (works with Docker volume)
 const DATA_DIR = process.env.DATA_DIR || 'data';
@@ -61,24 +63,31 @@ export const GET: RequestHandler = async ({ params }) => {
 		throw error(403, 'Access denied');
 	}
 
-	try {
-		const fileBuffer = await readFile(filePath);
-		const fileStat = await stat(filePath);
+	// Optimization: Use X-Accel-Redirect (X-Sendfile) to let Caddy serve the file.
+	// This frees up Node.js Event Loop and Memory immediately.
+	// We send '/filename' (with leading slash). Caddy will join it with the internal uploads root.
+	if (!dev) {
+		const redirectPath = `/${decodedFilename}`;
 		
-		// Determine MIME type from extension
-		const ext = filename.split('.').pop()?.toLowerCase() || '';
-		const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
-
-		return new Response(fileBuffer, {
+		return new Response(null, {
 			headers: {
-				'Content-Type': mimeType,
-				'Content-Length': fileStat.size.toString(),
-				'Cache-Control': 'public, max-age=31536000, immutable', // Cache for 1 year (files are immutable by UUID)
-				'Accept-Ranges': 'bytes'
+				'X-Accel-Redirect': redirectPath,
 			}
 		});
-	} catch (err) {
-		console.error('Error serving file:', err);
-		throw error(500, 'Error reading file');
 	}
+
+	const extension = decodedFilename.split('.').pop()?.toLowerCase() || '';
+	const contentType = MIME_TYPES[extension] || 'application/octet-stream';
+	const stats = await stat(realFilePath);
+	
+	const stream = createReadStream(realFilePath);
+	// @ts-ignore - Readable.toWeb matches ReadableStream but TS might complain about exact match in some envs
+	const webStream = Readable.toWeb(stream);
+	
+	return new Response(webStream as any, {
+		headers: {
+			'Content-Type': contentType,
+			'Content-Length': stats.size.toString()
+		}
+	});
 };

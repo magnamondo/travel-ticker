@@ -10,6 +10,11 @@ import { join, dirname, basename, extname } from 'path';
 // - Used by platforms like Facebook, Flickr, etc.
 const MAX_IMAGE_DIMENSION = 2048;
 
+// Thumbnail size for the grid layout
+// 600px covers the featured image (2x2 in 3-column grid) on most screens
+// and provides good quality for retina displays
+const THUMBNAIL_SIZE = 600;
+
 export interface ImageDimensions {
 	width: number;
 	height: number;
@@ -126,8 +131,10 @@ function convertWithImageMagick(inputPath: string, outputPath: string): Promise<
 	return new Promise((resolve, reject) => {
 		const proc = spawn('convert', [
 			inputPath,
-			'-quality', '90',
 			'-auto-orient',  // Respect EXIF orientation
+			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
+			'-interlace', 'Plane',  // Progressive JPEG
+			'-quality', '90',
 			outputPath
 		]);
 
@@ -155,6 +162,7 @@ function convertWithFFmpeg(inputPath: string, outputPath: string): Promise<void>
 		const proc = spawn('ffmpeg', [
 			'-y',  // Overwrite output
 			'-i', inputPath,
+			'-map_metadata', '-1',  // Remove all metadata for privacy
 			'-q:v', '2',  // High quality JPEG
 			outputPath
 		]);
@@ -195,7 +203,7 @@ export function isImageFile(mimeType: string): boolean {
 
 /**
  * Generate a thumbnail for an image file using ImageMagick or ffmpeg
- * Creates a 100x100 thumbnail (center cropped)
+ * Creates a 600x600 thumbnail (center cropped) for the grid layout
  */
 export async function generateImageThumbnail(
 	inputPath: string,
@@ -242,15 +250,19 @@ export async function generateImageThumbnail(
  */
 function generateThumbnailWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		// Use ImageMagick to create a 100x100 thumbnail
+		// Use ImageMagick to create a thumbnail
 		// -thumbnail respects EXIF orientation and strips metadata for smaller files
-		// 100x100^ means fill the 100x100 box, then we crop to exact size
+		// -strip explicitly removes all metadata (EXIF, GPS, etc.) for privacy
+		// Size^ means fill the box, then we crop to exact size
+		// -interlace Plane creates progressive JPEG for better perceived loading
 		const proc = spawn('convert', [
 			inputPath,
 			'-auto-orient',
-			'-thumbnail', '100x100^',
+			'-strip',  // Remove all metadata for privacy
+			'-thumbnail', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}^`,
 			'-gravity', 'center',
-			'-extent', '100x100',
+			'-extent', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}`,
+			'-interlace', 'Plane',
 			'-quality', '85',
 			outputPath
 		]);
@@ -273,15 +285,18 @@ function generateThumbnailWithImageMagick(inputPath: string, outputPath: string)
 
 /**
  * Generate thumbnail using ffmpeg as fallback
+ * Note: ffmpeg JPEG output doesn't support progressive encoding natively,
+ * but ImageMagick (primary method) does. This is acceptable as a fallback.
  */
 function generateThumbnailWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		// Use ffmpeg to create a 100x100 center-cropped thumbnail
+		// Use ffmpeg to create a center-cropped thumbnail
 		const proc = spawn('ffmpeg', [
 			'-y',
 			'-i', inputPath,
-			'-vf', 'scale=100:100:force_original_aspect_ratio=increase,crop=100:100',
+			'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
 			'-frames:v', '1',
+			'-map_metadata', '-1',  // Remove all metadata for privacy
 			'-q:v', '2',
 			outputPath
 		]);
@@ -387,8 +402,115 @@ function needsResize(dimensions: ImageDimensions): boolean {
 }
 
 /**
+ * Strip all metadata from an image file (EXIF, GPS, etc.) for privacy
+ * Replaces the original file with the stripped version
+ */
+export async function stripImageMetadata(inputPath: string): Promise<ImageConversionResult> {
+	if (!existsSync(inputPath)) {
+		return { success: false, error: 'Input file not found' };
+	}
+
+	const imageMagickAvailable = await isImageMagickAvailable();
+	const ffmpegAvailable = await isFFmpegAvailable();
+
+	if (!imageMagickAvailable && !ffmpegAvailable) {
+		return { success: false, error: 'Neither ImageMagick nor ffmpeg available for metadata stripping' };
+	}
+
+	const dir = dirname(inputPath);
+	const ext = extname(inputPath);
+	const base = basename(inputPath, ext);
+	const tempPath = join(dir, `${base}_stripped${ext}`);
+
+	try {
+		if (imageMagickAvailable) {
+			await stripWithImageMagick(inputPath, tempPath);
+		} else {
+			await stripWithFFmpeg(inputPath, tempPath);
+		}
+
+		// Delete original and rename stripped file to take its place
+		await unlink(inputPath);
+		await rename(tempPath, inputPath);
+
+		return {
+			success: true,
+			outputPath: inputPath,
+			mimeType: getMimeTypeFromExtension(ext)
+		};
+	} catch (err) {
+		// Clean up temp file if it exists
+		try {
+			if (existsSync(tempPath)) {
+				await unlink(tempPath);
+			}
+		} catch {
+			// Ignore cleanup errors
+		}
+		return {
+			success: false,
+			error: err instanceof Error ? err.message : 'Metadata stripping failed'
+		};
+	}
+}
+
+function stripWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('convert', [
+			inputPath,
+			'-auto-orient',  // Apply orientation before stripping
+			'-strip',  // Remove all metadata
+			'-interlace', 'Plane',  // Progressive JPEG
+			'-quality', '90',
+			outputPath
+		]);
+
+		let stderr = '';
+		proc.stderr.on('data', (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error(`ImageMagick strip failed: ${stderr}`));
+			}
+		});
+	});
+}
+
+function stripWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('ffmpeg', [
+			'-y',
+			'-i', inputPath,
+			'-map_metadata', '-1',  // Remove all metadata
+			'-q:v', '2',
+			outputPath
+		]);
+
+		let stderr = '';
+		proc.stderr.on('data', (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error(`ffmpeg strip failed: ${stderr}`));
+			}
+		});
+	});
+}
+
+/**
  * Resize an image if it exceeds maximum dimensions
- * Deletes the original and replaces it with the resized version
+ * Also strips all metadata for privacy
+ * Deletes the original and replaces it with the processed version
  * Returns the path to the (possibly unchanged) image
  */
 export async function resizeImageIfNeeded(inputPath: string): Promise<ImageConversionResult> {
@@ -398,13 +520,13 @@ export async function resizeImageIfNeeded(inputPath: string): Promise<ImageConve
 
 	const dimensions = await getImageDimensions(inputPath);
 	if (!dimensions) {
-		// Can't determine dimensions, skip resize
-		return { success: true, outputPath: inputPath };
+		// Can't determine dimensions, but still strip metadata for privacy
+		return stripImageMetadata(inputPath);
 	}
 
 	if (!needsResize(dimensions)) {
-		// No resize needed
-		return { success: true, outputPath: inputPath };
+		// No resize needed, but still strip metadata for privacy
+		return stripImageMetadata(inputPath);
 	}
 
 	const imageMagickAvailable = await isImageMagickAvailable();
@@ -469,7 +591,9 @@ function resizeWithImageMagick(inputPath: string, outputPath: string, maxDimensi
 		const proc = spawn('convert', [
 			inputPath,
 			'-auto-orient',
+			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
 			'-resize', `${maxDimension}x${maxDimension}>`,  // Only shrink larger images, maintain aspect ratio
+			'-interlace', 'Plane',  // Progressive JPEG
 			'-quality', '90',
 			outputPath
 		]);
@@ -497,6 +621,7 @@ function resizeWithFFmpeg(inputPath: string, outputPath: string, maxDimension: n
 			'-y',
 			'-i', inputPath,
 			'-vf', `scale='if(gt(iw,ih),min(${maxDimension},iw),-2)':'if(gt(ih,iw),min(${maxDimension},ih),-2)'`,
+			'-map_metadata', '-1',  // Remove all metadata for privacy
 			'-q:v', '2',
 			outputPath
 		]);

@@ -1,11 +1,27 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
-import { segment, milestone, milestoneMedia } from '$lib/server/db/schema';
-import { asc, eq, desc, sql, max } from 'drizzle-orm';
+import { segment, milestone, milestoneMedia, group, milestoneGroup, videoJob, uploadSession } from '$lib/server/db/schema';
+import { asc, eq, desc, max, and, inArray } from 'drizzle-orm';
 import { fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
-import { readdir } from 'fs/promises';
+import { readdir, unlink, rm } from 'fs/promises';
 import { join } from 'path';
+import { existsSync } from 'fs';
+
+const DATA_DIR = process.env.DATA_DIR || 'data';
+const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
+
+// Helper to delete a file from a /api/uploads/... URL
+async function deleteFileFromUrl(url: string | null): Promise<void> {
+	if (!url || !url.startsWith('/api/uploads/')) return;
+	const filename = url.replace('/api/uploads/', '');
+	const filePath = join(UPLOADS_DIR, filename);
+	try {
+		await unlink(filePath);
+	} catch {
+		// File may not exist or already deleted - ignore
+	}
+}
 
 export const load: PageServerLoad = async () => {
 	const segments = await db.select().from(segment).orderBy(asc(segment.sortOrder));
@@ -20,10 +36,11 @@ export const load: PageServerLoad = async () => {
 			date: milestone.date,
 			avatar: milestone.avatar,
 			meta: milestone.meta,
-			published: milestone.published
+			published: milestone.published,
+			sortOrder: milestone.sortOrder
 		})
 		.from(milestone)
-		.orderBy(desc(milestone.createdAt));
+		.orderBy(desc(milestone.date), asc(milestone.sortOrder));
 
 	// Get all media (worker updates milestone_media directly with final URLs)
 	const allMedia = await db
@@ -51,7 +68,12 @@ export const load: PageServerLoad = async () => {
 					media: mediaByMilestone.get(m.id) || []
 				}))
 		}))
-		.filter((group) => group.milestones.length > 0 || segments.length <= 5);
+		// Sort segments by creation date (newest first)
+		.sort((a, b) => {
+			const aDate = a.segment.createdAt?.getTime() ?? 0;
+			const bDate = b.segment.createdAt?.getTime() ?? 0;
+			return bDate - aDate;
+		});
 
 	// Get all uploaded images for avatar picker
 	const uploadsDir = join(process.cwd(), 'data', 'uploads');
@@ -65,10 +87,23 @@ export const load: PageServerLoad = async () => {
 		// uploads directory may not exist yet
 	}
 
+	// Get all groups for the group picker
+	const groups = await db.select().from(group).orderBy(group.name);
+
+	// Get milestone-group assignments
+	const milestoneGroupAssignments = await db
+		.select({
+			milestoneId: milestoneGroup.milestoneId,
+			groupId: milestoneGroup.groupId
+		})
+		.from(milestoneGroup);
+
 	return {
 		segments,
 		groupedEntries,
-		availableImages
+		availableImages,
+		groups,
+		milestoneGroupAssignments
 	};
 };
 
@@ -143,6 +178,7 @@ export const actions: Actions = {
 		const dateStr = formData.get('date') as string;
 		const metaJson = formData.get('meta') as string;
 		const published = formData.get('published') === 'on';
+		const groupIdsJson = formData.get('groupIds') as string;
 
 		if (!milestoneId || !segmentId || !title || !dateStr) {
 			return fail(400, { error: 'All fields are required' });
@@ -153,6 +189,16 @@ export const actions: Actions = {
 		if (metaJson) {
 			try {
 				meta = JSON.parse(metaJson);
+			} catch {
+				// Ignore invalid JSON
+			}
+		}
+
+		// Parse group IDs
+		let groupIds: string[] = [];
+		if (groupIdsJson) {
+			try {
+				groupIds = JSON.parse(groupIdsJson);
 			} catch {
 				// Ignore invalid JSON
 			}
@@ -170,6 +216,19 @@ export const actions: Actions = {
 			})
 			.where(eq(milestone.id, milestoneId));
 
+		// Update milestone-group assignments
+		// First, delete all existing assignments for this milestone
+		await db.delete(milestoneGroup).where(eq(milestoneGroup.milestoneId, milestoneId));
+		
+		// Then, insert new assignments
+		for (const groupId of groupIds) {
+			await db.insert(milestoneGroup).values({
+				id: randomUUID(),
+				milestoneId,
+				groupId
+			});
+		}
+
 		return { success: true, message: 'Entry updated!' };
 	},
 
@@ -177,6 +236,66 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const milestoneId = formData.get('milestoneId') as string;
 
+		// Fetch all media for this milestone before deleting
+		const mediaToDelete = await db
+			.select()
+			.from(milestoneMedia)
+			.where(eq(milestoneMedia.milestoneId, milestoneId));
+
+		// Get video job IDs to clean up their input files
+		const videoJobIds = mediaToDelete
+			.filter(m => m.videoJobId)
+			.map(m => m.videoJobId as string);
+
+		// Fetch video jobs to get input paths
+		if (videoJobIds.length > 0) {
+			const jobs = await db
+				.select({ inputPath: videoJob.inputPath })
+				.from(videoJob)
+				.where(inArray(videoJob.id, videoJobIds));
+
+			// Delete video job input files (original uploaded videos)
+			for (const job of jobs) {
+				try {
+					if (existsSync(job.inputPath)) {
+						await unlink(job.inputPath);
+					}
+				} catch {
+					// Ignore - file may already be deleted
+				}
+			}
+
+			// Delete video job records
+			await db.delete(videoJob).where(inArray(videoJob.id, videoJobIds));
+		}
+
+		// Delete physical media files
+		for (const media of mediaToDelete) {
+			await deleteFileFromUrl(media.url);
+			await deleteFileFromUrl(media.thumbnailUrl);
+		}
+
+		// Clean up upload session chunks for this milestone
+		const sessions = await db
+			.select({ id: uploadSession.id })
+			.from(uploadSession)
+			.where(eq(uploadSession.milestoneId, milestoneId));
+
+		for (const session of sessions) {
+			const chunkDir = join(UPLOADS_DIR, 'chunks', session.id);
+			try {
+				if (existsSync(chunkDir)) {
+					await rm(chunkDir, { recursive: true });
+				}
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+
+		// Delete upload sessions (should cascade, but be explicit)
+		await db.delete(uploadSession).where(eq(uploadSession.milestoneId, milestoneId));
+
+		// Delete milestone (cascades to media records)
 		await db.delete(milestone).where(eq(milestone.id, milestoneId));
 
 		return { success: true, message: 'Entry deleted!' };
@@ -294,6 +413,37 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const mediaId = formData.get('mediaId') as string;
 
+		// Fetch media record before deleting to get file URLs
+		const [media] = await db
+			.select()
+			.from(milestoneMedia)
+			.where(eq(milestoneMedia.id, mediaId));
+
+		if (media) {
+			// Delete video job and its input file if exists
+			if (media.videoJobId) {
+				const [job] = await db
+					.select({ inputPath: videoJob.inputPath })
+					.from(videoJob)
+					.where(eq(videoJob.id, media.videoJobId));
+
+				if (job) {
+					try {
+						if (existsSync(job.inputPath)) {
+							await unlink(job.inputPath);
+						}
+					} catch {
+						// Ignore - file may already be deleted
+					}
+					await db.delete(videoJob).where(eq(videoJob.id, media.videoJobId));
+				}
+			}
+
+			// Delete physical files
+			await deleteFileFromUrl(media.url);
+			await deleteFileFromUrl(media.thumbnailUrl);
+		}
+
 		await db.delete(milestoneMedia).where(eq(milestoneMedia.id, mediaId));
 
 		return { success: true, message: 'Media deleted!' };
@@ -365,7 +515,18 @@ export const actions: Actions = {
 
 		try {
 			const order = JSON.parse(orderJson) as Array<{ id: string; sortOrder: number }>;
-			
+
+			// Get milestone ID from first item for cache invalidation
+			let milestoneId: string | undefined;
+			if (order.length > 0) {
+				const m = await db
+					.select({ milestoneId: milestoneMedia.milestoneId })
+					.from(milestoneMedia)
+					.where(eq(milestoneMedia.id, order[0].id))
+					.get();
+				milestoneId = m?.milestoneId;
+			}
+
 			for (const item of order) {
 				await db
 					.update(milestoneMedia)
@@ -374,6 +535,30 @@ export const actions: Actions = {
 			}
 
 			return { success: true, message: 'Media reordered!' };
+		} catch {
+			return fail(400, { error: 'Invalid order data' });
+		}
+	},
+
+	reorderMilestones: async ({ request }) => {
+		const formData = await request.formData();
+		const orderJson = formData.get('order') as string;
+
+		if (!orderJson) {
+			return fail(400, { error: 'Order data is required' });
+		}
+
+		try {
+			const order = JSON.parse(orderJson) as Array<{ id: string; sortOrder: number }>;
+
+			for (const item of order) {
+				await db
+					.update(milestone)
+					.set({ sortOrder: item.sortOrder })
+					.where(eq(milestone.id, item.id));
+			}
+
+			return { success: true, message: 'Entries reordered!' };
 		} catch {
 			return fail(400, { error: 'Invalid order data' });
 		}

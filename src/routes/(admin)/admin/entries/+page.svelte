@@ -40,20 +40,74 @@
 	let showAddMediaFor = $state<string | null>(null);
 	let uploadModeFor = $state<string | null>(null);
 	let uploadingMedia = $state(false);
+	let hasActiveUploads = $state(false); // Track if ChunkedUploader has uploads in progress
 	let uploadSuccess = $state<string | null>(null);
+	
 	let draggingMediaId = $state<string | null>(null);
 	let dragOverMediaId = $state<string | null>(null);
+
+	// Milestone drag state
+	let draggingMilestoneId = $state<string | null>(null);
+	let dragOverMilestoneId = $state<string | null>(null);
+	let currentDragMilestones = $state<Array<{ id: string; date: Date; sortOrder: number }>>([]);
+
+	// Touch drag state for mobile (media)
+	let touchDraggingMediaId = $state<string | null>(null);
+	let touchDragOverMediaId = $state<string | null>(null);
+	let touchStartY = $state(0);
+	let touchStartX = $state(0);
+	let touchCloneInitialLeft = $state(0);
+	let touchCloneInitialTop = $state(0);
+	let touchCurrentMilestoneMedia = $state<Array<{ id: string; sortOrder: number }>>([]);
+	let touchDragClone = $state<HTMLElement | null>(null);
+
+	// Touch drag state for milestones
+	let touchDraggingMilestoneId = $state<string | null>(null);
+	let touchDragOverMilestoneId = $state<string | null>(null);
+	let touchMilestoneStartY = $state(0);
+	let touchMilestoneStartX = $state(0);
+	let touchMilestoneCloneInitialLeft = $state(0);
+	let touchMilestoneCloneInitialTop = $state(0);
+	let touchCurrentMilestones = $state<Array<{ id: string; date: Date; sortOrder: number }>>([]);
+	let touchMilestoneDragClone = $state<HTMLElement | null>(null);
+
+	// Group dropdown state
+	let groupDropdownOpen = $state<string | null>(null);
+
+	// Close dropdown when clicking outside
+	$effect(() => {
+		if (groupDropdownOpen) {
+			const handleClickOutside = (e: MouseEvent) => {
+				const target = e.target as HTMLElement;
+				if (!target.closest('.groups-dropdown-container')) {
+					groupDropdownOpen = null;
+				}
+			};
+			// Delay to avoid immediate close from the same click that opened it
+			setTimeout(() => {
+				document.addEventListener('click', handleClickOutside);
+			}, 0);
+			return () => {
+				document.removeEventListener('click', handleClickOutside);
+			};
+		}
+	});
 
 	// Track edited meta per milestone
 	let milestoneMetaMap = new SvelteMap<string, MetaItem[]>();
 
-	// Initialize meta when editing starts
+	// Track selected groups per milestone
+	let milestoneGroupsMap = new SvelteMap<string, string[]>();
+
+	// Initialize meta and groups when editing starts
 	$effect(() => {
 		const milestoneId = editingMilestoneId;
 		if (milestoneId) {
 			// Use untrack to prevent the map read from creating a dependency
-			const hasEntry = untrack(() => milestoneMetaMap.has(milestoneId));
-			if (!hasEntry) {
+			const hasMetaEntry = untrack(() => milestoneMetaMap.has(milestoneId));
+			const hasGroupsEntry = untrack(() => milestoneGroupsMap.has(milestoneId));
+			
+			if (!hasMetaEntry) {
 				// Find the milestone being edited (untrack data access to prevent loops on data refresh)
 				const entries = untrack(() => data.groupedEntries);
 				for (const group of entries) {
@@ -63,6 +117,15 @@
 						break;
 					}
 				}
+			}
+			
+			if (!hasGroupsEntry) {
+				// Get current group assignments for this milestone
+				const assignments = untrack(() => data.milestoneGroupAssignments);
+				const groupIds = assignments
+					.filter(a => a.milestoneId === milestoneId)
+					.map(a => a.groupId);
+				milestoneGroupsMap.set(milestoneId, groupIds);
 			}
 		}
 	});
@@ -99,6 +162,24 @@
 		return JSON.stringify(filtered);
 	}
 
+	function getMilestoneGroups(milestoneId: string): string[] {
+		return milestoneGroupsMap.get(milestoneId) ?? [];
+	}
+
+	function toggleMilestoneGroup(milestoneId: string, groupId: string) {
+		const current = milestoneGroupsMap.get(milestoneId) ?? [];
+		if (current.includes(groupId)) {
+			milestoneGroupsMap.set(milestoneId, current.filter(id => id !== groupId));
+		} else {
+			milestoneGroupsMap.set(milestoneId, [...current, groupId]);
+		}
+	}
+
+	function getGroupsJson(milestoneId: string): string {
+		const groups = milestoneGroupsMap.get(milestoneId) ?? [];
+		return JSON.stringify(groups);
+	}
+
 	function autoResize(node: HTMLTextAreaElement) {
 		const resize = () => {
 			node.style.height = 'auto';
@@ -121,7 +202,7 @@
 	}
 
 	async function handleMilestoneUpload(milestoneId: string, result: UploadResult) {
-		// After upload, add the media via fetch (no page reload)
+		// After upload, add the media via fetch (no page reload yet - wait for all uploads)
 		const mediaType = result.mimeType.startsWith('video/') ? 'video' : 'image';
 		
 		const formData = new FormData();
@@ -138,26 +219,26 @@
 				body: formData
 			});
 			
-			if (response.ok) {
-				// Refresh data without closing the form
-				await invalidateAll();
-				uploadSuccess = 'Media added!';
-				setTimeout(() => { uploadSuccess = null; }, 3000);
+			if (!response.ok) {
+				console.error('Failed to add media');
 			}
+			// Don't invalidate here - wait for all uploads to complete
 		} catch (err) {
 			console.error('Failed to add media:', err);
 		}
 	}
 	
 	async function handleAllUploadsComplete(milestoneId: string, results: UploadResult[]) {
-		// Handle multiple uploads completing - add all media
-		uploadingMedia = true;
+		// Keep the uploader visible after data refresh
+		uploadModeFor = milestoneId;
 		
-		for (const result of results) {
-			await handleMilestoneUpload(milestoneId, result);
-		}
-		
+		// All uploads complete - now refresh data
 		uploadingMedia = false;
+		await invalidateAll();
+		if (results.length > 0) {
+			uploadSuccess = `${results.length} file${results.length > 1 ? 's' : ''} uploaded!`;
+			setTimeout(() => { uploadSuccess = null; }, 3000);
+		}
 	}
 	
 	// Drag and drop reordering for media
@@ -194,12 +275,17 @@
 			return;
 		}
 		
+		await reorderMedia(draggingMediaId, targetMediaId, milestoneMedia);
+		draggingMediaId = null;
+	}
+
+	// Shared reorder logic for both mouse and touch
+	async function reorderMedia(fromMediaId: string, toMediaId: string, milestoneMedia: Array<{ id: string; sortOrder: number }>) {
 		// Find indices
-		const fromIndex = milestoneMedia.findIndex(m => m.id === draggingMediaId);
-		const toIndex = milestoneMedia.findIndex(m => m.id === targetMediaId);
+		const fromIndex = milestoneMedia.findIndex(m => m.id === fromMediaId);
+		const toIndex = milestoneMedia.findIndex(m => m.id === toMediaId);
 		
 		if (fromIndex === -1 || toIndex === -1) {
-			draggingMediaId = null;
 			return;
 		}
 		
@@ -213,8 +299,6 @@
 			id: item.id,
 			sortOrder: index
 		}));
-		
-		draggingMediaId = null;
 		
 		// Save to server
 		const formData = new FormData();
@@ -232,6 +316,297 @@
 		} catch (err) {
 			console.error('Failed to reorder media:', err);
 		}
+	}
+
+	// Touch event handlers for mobile drag and drop
+	function handleMediaTouchStart(e: TouchEvent, mediaId: string, milestoneMedia: Array<{ id: string; sortOrder: number }>) {
+		const touch = e.touches[0];
+		touchStartX = touch.clientX;
+		touchStartY = touch.clientY;
+		touchDraggingMediaId = mediaId;
+		touchCurrentMilestoneMedia = milestoneMedia;
+		
+		// Create a visual clone for dragging
+		const target = e.currentTarget as HTMLElement;
+		const clone = target.cloneNode(true) as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		
+		// Store initial clone position
+		touchCloneInitialLeft = rect.left;
+		touchCloneInitialTop = rect.top;
+		
+		clone.classList.add('touch-drag-clone');
+		clone.style.position = 'fixed';
+		clone.style.left = `${rect.left}px`;
+		clone.style.top = `${rect.top}px`;
+		clone.style.width = `${rect.width}px`;
+		clone.style.height = `${rect.height}px`;
+		clone.style.zIndex = '10000';
+		clone.style.pointerEvents = 'none';
+		clone.style.opacity = '0.8';
+		clone.style.transform = 'scale(1.1)';
+		clone.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+		
+		document.body.appendChild(clone);
+		touchDragClone = clone;
+	}
+
+	function handleMediaTouchMove(e: TouchEvent) {
+		if (!touchDraggingMediaId || !touchDragClone) return;
+		
+		e.preventDefault(); // Prevent scrolling while dragging
+		
+		const touch = e.touches[0];
+		const deltaX = touch.clientX - touchStartX;
+		const deltaY = touch.clientY - touchStartY;
+		
+		// Move the clone based on initial position + delta
+		touchDragClone.style.left = `${touchCloneInitialLeft + deltaX}px`;
+		touchDragClone.style.top = `${touchCloneInitialTop + deltaY}px`;
+		
+		// Find element under touch point
+		touchDragClone.style.display = 'none';
+		const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+		touchDragClone.style.display = '';
+		
+		// Find the media-thumb ancestor
+		const thumbBelow = elementBelow?.closest('.media-thumb') as HTMLElement | null;
+		if (thumbBelow) {
+			const mediaId = thumbBelow.dataset.mediaId;
+			if (mediaId && mediaId !== touchDraggingMediaId) {
+				touchDragOverMediaId = mediaId;
+			} else {
+				touchDragOverMediaId = null;
+			}
+		} else {
+			touchDragOverMediaId = null;
+		}
+	}
+
+	async function handleMediaTouchEnd() {
+		// Remove the clone
+		if (touchDragClone) {
+			touchDragClone.remove();
+			touchDragClone = null;
+		}
+
+		// Perform reorder if we have a valid drop target
+		if (touchDraggingMediaId && touchDragOverMediaId && touchDraggingMediaId !== touchDragOverMediaId) {
+			await reorderMedia(touchDraggingMediaId, touchDragOverMediaId, touchCurrentMilestoneMedia);
+		}
+
+		// Reset touch state
+		touchDraggingMediaId = null;
+		touchDragOverMediaId = null;
+		touchCurrentMilestoneMedia = [];
+	}
+
+	// Helper to check if two dates are the same day
+	function isSameDay(a: Date, b: Date): boolean {
+		return a.getFullYear() === b.getFullYear() &&
+			a.getMonth() === b.getMonth() &&
+			a.getDate() === b.getDate();
+	}
+
+	// Milestone drag and drop handlers
+	function handleMilestoneDragStart(e: DragEvent, milestoneId: string, milestones: Array<{ id: string; date: Date; sortOrder: number }>) {
+		draggingMilestoneId = milestoneId;
+		currentDragMilestones = milestones;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', milestoneId);
+		}
+	}
+
+	function handleMilestoneDragOver(e: DragEvent, milestoneId: string, milestoneDate: Date) {
+		e.preventDefault();
+		if (!draggingMilestoneId || draggingMilestoneId === milestoneId) return;
+
+		// Find dragging milestone date
+		const draggingMilestone = currentDragMilestones.find(m => m.id === draggingMilestoneId);
+		if (!draggingMilestone) return;
+
+		// Only allow drop on same day
+		if (isSameDay(draggingMilestone.date, milestoneDate)) {
+			dragOverMilestoneId = milestoneId;
+		}
+	}
+
+	function handleMilestoneDragLeave() {
+		dragOverMilestoneId = null;
+	}
+
+	function handleMilestoneDragEnd() {
+		draggingMilestoneId = null;
+		dragOverMilestoneId = null;
+		currentDragMilestones = [];
+	}
+
+	async function handleMilestoneDrop(e: DragEvent, targetMilestoneId: string) {
+		e.preventDefault();
+		dragOverMilestoneId = null;
+
+		if (!draggingMilestoneId || draggingMilestoneId === targetMilestoneId) {
+			draggingMilestoneId = null;
+			return;
+		}
+
+		await reorderMilestones(draggingMilestoneId, targetMilestoneId, currentDragMilestones);
+		draggingMilestoneId = null;
+		currentDragMilestones = [];
+	}
+
+	// Shared reorder logic for milestones
+	async function reorderMilestones(fromId: string, toId: string, milestones: Array<{ id: string; date: Date; sortOrder: number }>) {
+		const fromIdx = milestones.findIndex(m => m.id === fromId);
+		const toIdx = milestones.findIndex(m => m.id === toId);
+
+		if (fromIdx === -1 || toIdx === -1) return;
+
+		// Only allow same-day reordering
+		if (!isSameDay(milestones[fromIdx].date, milestones[toIdx].date)) return;
+
+		// Create new order
+		const reordered = [...milestones];
+		const [removed] = reordered.splice(fromIdx, 1);
+		reordered.splice(toIdx, 0, removed);
+
+		// Build order data - only update milestones that share the same date as the dragged item
+		const draggedDate = milestones[fromIdx].date;
+		const sameDayMilestones = reordered.filter(m => isSameDay(m.date, draggedDate));
+		const order = sameDayMilestones.map((item, index) => ({
+			id: item.id,
+			sortOrder: index
+		}));
+
+		const formData = new FormData();
+		formData.append('order', JSON.stringify(order));
+
+		try {
+			const response = await fetch('?/reorderMilestones', {
+				method: 'POST',
+				body: formData
+			});
+
+			if (response.ok) {
+				await invalidateAll();
+			}
+		} catch (err) {
+			console.error('Failed to reorder milestones:', err);
+		}
+	}
+
+	// Touch event handlers for milestone drag and drop
+	function handleMilestoneTouchStart(e: TouchEvent, milestoneId: string, milestones: Array<{ id: string; date: Date; sortOrder: number }>) {
+		const touch = e.touches[0];
+		touchMilestoneStartX = touch.clientX;
+		touchMilestoneStartY = touch.clientY;
+		touchDraggingMilestoneId = milestoneId;
+		touchCurrentMilestones = milestones;
+
+		// Find the parent milestone card to clone
+		const handle = e.currentTarget as HTMLElement;
+		const card = handle.closest('.milestone-card') as HTMLElement;
+		if (!card) return;
+
+		const clone = card.cloneNode(true) as HTMLElement;
+		const rect = card.getBoundingClientRect();
+
+		touchMilestoneCloneInitialLeft = rect.left;
+		touchMilestoneCloneInitialTop = rect.top;
+
+		clone.classList.add('touch-milestone-drag-clone');
+		clone.style.position = 'fixed';
+		clone.style.left = `${rect.left}px`;
+		clone.style.top = `${rect.top}px`;
+		clone.style.width = `${rect.width}px`;
+		clone.style.height = `${rect.height}px`;
+		clone.style.zIndex = '10000';
+		clone.style.pointerEvents = 'none';
+		clone.style.opacity = '0.9';
+		clone.style.transform = 'scale(1.02)';
+		clone.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+
+		document.body.appendChild(clone);
+		touchMilestoneDragClone = clone;
+	}
+
+	function handleMilestoneTouchMove(e: TouchEvent) {
+		if (!touchDraggingMilestoneId || !touchMilestoneDragClone) return;
+
+		e.preventDefault();
+
+		const touch = e.touches[0];
+		const deltaX = touch.clientX - touchMilestoneStartX;
+		const deltaY = touch.clientY - touchMilestoneStartY;
+
+		touchMilestoneDragClone.style.left = `${touchMilestoneCloneInitialLeft + deltaX}px`;
+		touchMilestoneDragClone.style.top = `${touchMilestoneCloneInitialTop + deltaY}px`;
+
+		// Find element under touch point
+		touchMilestoneDragClone.style.display = 'none';
+		const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+		touchMilestoneDragClone.style.display = '';
+
+		// Find the milestone-card ancestor
+		const cardBelow = elementBelow?.closest('.milestone-card') as HTMLElement | null;
+		if (cardBelow) {
+			const milestoneId = cardBelow.dataset.milestoneId;
+			const milestoneDate = cardBelow.dataset.milestoneDate;
+			if (milestoneId && milestoneId !== touchDraggingMilestoneId && milestoneDate) {
+				// Check if same day
+				const draggingMilestone = touchCurrentMilestones.find(m => m.id === touchDraggingMilestoneId);
+				if (draggingMilestone && isSameDay(draggingMilestone.date, new Date(milestoneDate))) {
+					touchDragOverMilestoneId = milestoneId;
+				} else {
+					touchDragOverMilestoneId = null;
+				}
+			} else {
+				touchDragOverMilestoneId = null;
+			}
+		} else {
+			touchDragOverMilestoneId = null;
+		}
+	}
+
+	async function handleMilestoneTouchEnd() {
+		if (touchMilestoneDragClone) {
+			touchMilestoneDragClone.remove();
+			touchMilestoneDragClone = null;
+		}
+
+		if (touchDraggingMilestoneId && touchDragOverMilestoneId && touchDraggingMilestoneId !== touchDragOverMilestoneId) {
+			await reorderMilestones(touchDraggingMilestoneId, touchDragOverMilestoneId, touchCurrentMilestones);
+		}
+
+		touchDraggingMilestoneId = null;
+		touchDragOverMilestoneId = null;
+		touchCurrentMilestones = [];
+	}
+
+	// Check if a milestone has same-day neighbors (for showing drag hint)
+	function hasSameDayNeighbors(milestoneId: string, milestones: Array<{ id: string; date: Date }>): boolean {
+		const idx = milestones.findIndex(m => m.id === milestoneId);
+		if (idx === -1) return false;
+
+		const prev = idx > 0 && isSameDay(milestones[idx].date, milestones[idx - 1].date);
+		const next = idx < milestones.length - 1 && isSameDay(milestones[idx].date, milestones[idx + 1].date);
+		return prev || next;
+	}
+
+	// Action to attach touchmove with passive: false (needed for preventDefault)
+	function nonPassiveTouchMove(node: HTMLElement, handler: (e: TouchEvent) => void) {
+		node.addEventListener('touchmove', handler, { passive: false });
+		return {
+			update(newHandler: (e: TouchEvent) => void) {
+				node.removeEventListener('touchmove', handler);
+				handler = newHandler;
+				node.addEventListener('touchmove', handler, { passive: false });
+			},
+			destroy() {
+				node.removeEventListener('touchmove', handler);
+			}
+		};
 	}
 </script>
 
@@ -301,27 +676,66 @@
 				{/if}
 				<div class="milestones">
 					{#each group.milestones as milestone (milestone.id)}
-							<div class="milestone-card" class:draft={!milestone.published} class:editing={editingMilestoneId === milestone.id}>
-								<button type="button" class="milestone-row" onclick={() => (editingMilestoneId = editingMilestoneId === milestone.id ? null : milestone.id)}>
-									<span class="published-indicator" class:published={milestone.published} title={milestone.published ? 'Published' : 'Draft'}>
-										{milestone.published ? '●' : '○'}
-									</span>
-									<span class="milestone-date">{formatDate(milestone.date)}</span>
-									<span class="milestone-title">{milestone.title}</span>
-								</button>
+							<div
+								class="milestone-card"
+								role="listitem"
+								class:draft={!milestone.published}
+								class:editing={editingMilestoneId === milestone.id}
+								class:dragging={draggingMilestoneId === milestone.id || touchDraggingMilestoneId === milestone.id}
+								class:drag-over={dragOverMilestoneId === milestone.id || touchDragOverMilestoneId === milestone.id}
+								class:draggable={hasSameDayNeighbors(milestone.id, group.milestones)}
+								data-milestone-id={milestone.id}
+								data-milestone-date={milestone.date.toISOString()}
+								draggable={hasSameDayNeighbors(milestone.id, group.milestones)}
+								ondragstart={(e) => handleMilestoneDragStart(e, milestone.id, group.milestones)}
+								ondragover={(e) => handleMilestoneDragOver(e, milestone.id, milestone.date)}
+								ondragleave={handleMilestoneDragLeave}
+								ondragend={handleMilestoneDragEnd}
+								ondrop={(e) => handleMilestoneDrop(e, milestone.id)}
+							>
+								<div class="milestone-row-wrapper">
+									<button type="button" class="milestone-row" onclick={() => {
+										if (editingMilestoneId === milestone.id && hasActiveUploads) {
+											toasts.warning('Wait for uploads to finish before closing');
+											return;
+										}
+										const isOpening = editingMilestoneId !== milestone.id;
+										editingMilestoneId = isOpening ? milestone.id : null;
+									}}>
+										<span class="published-indicator" class:published={milestone.published} title={milestone.published ? 'Published' : 'Draft'}>
+											{milestone.published ? '●' : '○'}
+										</span>
+										<span class="milestone-date">{formatDate(milestone.date)}</span>
+										<span class="milestone-title">{milestone.title}</span>
+									</button>
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div
+										class="drag-handle-milestone"
+										class:disabled={!hasSameDayNeighbors(milestone.id, group.milestones)}
+										title={hasSameDayNeighbors(milestone.id, group.milestones) ? "Drag to reorder" : ""}
+										ontouchstart={(e) => hasSameDayNeighbors(milestone.id, group.milestones) && handleMilestoneTouchStart(e, milestone.id, group.milestones)}
+										use:nonPassiveTouchMove={handleMilestoneTouchMove}
+										ontouchend={handleMilestoneTouchEnd}
+									>⋮⋮</div>
+								</div>
 								{#if editingMilestoneId === milestone.id}
 									<div class="milestone-edit-panel">
 								<form id="edit-form-{milestone.id}" method="POST" action="?/updateMilestone" use:enhance={() => {
 									return async ({ result, update }) => {
 										await update();
 										if (result.type === 'success') {
-											editingMilestoneId = null;
+											if (hasActiveUploads) {
+												toasts.success('Saved! Uploads still in progress...');
+											} else {
+												editingMilestoneId = null;
+											}
 										}
 									};
 								}} class="milestone-edit-form">
 									<input type="hidden" name="milestoneId" value={milestone.id} />
 									<input type="hidden" name="published" value={milestone.published ? 'on' : ''} />
 									<input type="hidden" name="meta" value={getMetaJson(milestone.id)} />
+									<input type="hidden" name="groupIds" value={getGroupsJson(milestone.id)} />
 									<div class="edit-form-grid">
 										<div class="form-field">
 											<label for="edit-segment-{milestone.id}">Segment</label>
@@ -363,15 +777,19 @@
 											{#each milestone.media as item (item.id)}
 												<div 
 													class="media-thumb"
-													class:dragging={draggingMediaId === item.id}
-													class:drag-over={dragOverMediaId === item.id}
+													class:dragging={draggingMediaId === item.id || touchDraggingMediaId === item.id}
+													class:drag-over={dragOverMediaId === item.id || touchDragOverMediaId === item.id}
 													draggable="true"
 													role="listitem"
+													data-media-id={item.id}
 													ondragstart={(e) => handleMediaDragStart(e, item.id)}
 													ondragover={(e) => handleMediaDragOver(e, item.id)}
 													ondragleave={handleMediaDragLeave}
 													ondragend={handleMediaDragEnd}
 													ondrop={(e) => handleMediaDrop(e, item.id, milestone.media)}
+													ontouchstart={(e) => handleMediaTouchStart(e, item.id, milestone.media)}
+													use:nonPassiveTouchMove={handleMediaTouchMove}
+													ontouchend={handleMediaTouchEnd}
 												>
 													<div class="drag-handle" title="Drag to reorder">⋮⋮</div>
 													{#if item.type === 'video'}
@@ -381,7 +799,7 @@
 															videoJobId={item.videoJobId}
 														/>
 													{:else}
-														<img src={item.url} alt="" />
+														<img src={item.thumbnailUrl || item.url} alt="" />
 													{/if}
 													<form method="POST" action="?/deleteMedia" use:enhance class="delete-media-form">
 														<input type="hidden" name="mediaId" value={item.id} />
@@ -390,7 +808,7 @@
 												</div>
 											{/each}
 										</div>
-										<p class="reorder-hint">Drag thumbnails to reorder</p>
+										<p class="reorder-hint">Drag or hold & drag to reorder</p>
 									{:else}
 										<p class="no-media-hint">No media attached</p>
 									{/if}
@@ -419,13 +837,18 @@
 												milestoneId={milestone.id}
 												accept="image/*,video/*"
 												multiple={true}
+												bind:hasActiveUploads
 												onUploadComplete={(result) => handleMilestoneUpload(milestone.id, result)}
 												onAllUploadsComplete={(results) => handleAllUploadsComplete(milestone.id, results)}
 											/>
-											<button type="button" class="btn-small-secondary" onclick={() => (uploadModeFor = null)}>Done</button>
+											<button type="button" class="btn-small-secondary" onclick={() => {
+												uploadModeFor = null;
+											}}>Done</button>
 										</div>
 									{:else}
-										<button class="add-media-btn" onclick={() => (uploadModeFor = milestone.id)}>
+										<button class="add-media-btn" onclick={() => {
+											uploadModeFor = milestone.id;
+										}}>
 											Upload files
 										</button>
 									{/if}
@@ -473,6 +896,45 @@
 									</button>
 								</div>
 
+								<!-- Access Groups Section -->
+								{#if data.groups.length > 0}
+									{@const selectedGroupCount = getMilestoneGroups(milestone.id).length}
+									<div class="edit-groups-section">
+										<div class="groups-dropdown-container">
+											<button 
+												type="button" 
+												class="groups-dropdown-trigger"
+												onclick={() => groupDropdownOpen = groupDropdownOpen === milestone.id ? null : milestone.id}
+											>
+												<span class="groups-label">
+													🔒 Access Groups
+													{#if selectedGroupCount > 0}
+														<span class="groups-count">({selectedGroupCount})</span>
+													{:else}
+														<span class="groups-public">(public)</span>
+													{/if}
+												</span>
+												<span class="dropdown-arrow">{groupDropdownOpen === milestone.id ? '▲' : '▼'}</span>
+											</button>
+											{#if groupDropdownOpen === milestone.id}
+												<div class="groups-dropdown-panel">
+													<p class="groups-hint">No groups = public. Add groups to restrict visibility.</p>
+													{#each data.groups as grp (grp.id)}
+														<label class="group-checkbox-label">
+															<input 
+																type="checkbox" 
+																checked={getMilestoneGroups(milestone.id).includes(grp.id)}
+																onchange={() => toggleMilestoneGroup(milestone.id, grp.id)}
+															/>
+															<span>{grp.name}</span>
+														</label>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									</div>
+								{/if}
+
 								<div class="edit-panel-footer">
 									<label class="checkbox-label">
 										<input type="checkbox" checked={milestone.published} onchange={(e) => {
@@ -501,7 +963,13 @@
 												if (!confirm('Delete this entry and all its media?')) e.preventDefault();
 											}}>Delete</button>
 										</form>
-										<button type="button" class="btn-secondary" onclick={() => { editingMilestoneId = null; uploadModeFor = null; showAddMediaFor = null; }}>Cancel</button>
+										<button type="button" class="btn-secondary" onclick={() => {
+											if (hasActiveUploads) {
+												toasts.warning('Wait for uploads to finish before closing');
+												return;
+											}
+											editingMilestoneId = null; uploadModeFor = null; showAddMediaFor = null;
+										}}>Cancel</button>
 										<button type="submit" form="edit-form-{milestone.id}" class="btn-primary">Save</button>
 									</div>
 								</div>
@@ -563,6 +1031,8 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		margin: 0;
+		padding: 0.75rem 1rem;
+		background: var(--color-bg-secondary);
 	}
 
 	.form-field {
@@ -656,6 +1126,10 @@
 
 	.btn-icon-small:hover {
 		background: var(--color-bg-secondary);
+	}
+
+	.btn-icon-small.danger {
+		color: var(--color-error);
 	}
 
 	.btn-icon-small.danger:hover {
@@ -765,8 +1239,10 @@
 		background: var(--color-bg-secondary);
 	}
 
-	.milestone-card.editing .milestone-row {
-		background: rgba(59, 130, 246, 0.15);
+	.milestone-card.editing .milestone-row:hover,
+	.milestone-card.editing .milestone-row:focus,
+	.milestone-card.editing .milestone-row:active {
+		background: transparent;
 	}
 
 	.btn-icon-small.add {
@@ -815,6 +1291,65 @@
 		background: var(--color-bg-secondary);
 	}
 
+	.milestone-row:focus,
+	.milestone-row:active {
+		outline: none;
+		background: transparent;
+	}
+
+	.milestone-row-wrapper {
+		display: flex;
+		align-items: stretch;
+	}
+
+	.milestone-card.editing .milestone-row-wrapper {
+		border-left: 3px solid var(--color-primary);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.drag-handle-milestone {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 0.5rem;
+		color: var(--color-text);
+		cursor: grab;
+		font-size: 0.875rem;
+		font-weight: 700;
+		letter-spacing: -2px;
+		opacity: 0.4;
+		transition: opacity 0.15s, color 0.15s;
+		user-select: none;
+		box-shadow: inset 2px 0 4px -2px rgba(0, 0, 0, 0.45);
+	}
+
+	.drag-handle-milestone:not(.disabled):hover {
+		opacity: 1;
+	}
+
+	.drag-handle-milestone.disabled {
+		cursor: default;
+		pointer-events: none;
+	}
+
+	.milestone-card.draggable {
+		cursor: grab;
+	}
+
+	.milestone-card.draggable:active {
+		cursor: grabbing;
+	}
+
+	.milestone-card.dragging {
+		opacity: 0.5;
+		background: var(--color-bg-secondary);
+	}
+
+	.milestone-card.drag-over {
+		box-shadow: inset 0 0 0 2px var(--color-primary);
+		background: rgba(59, 130, 246, 0.1);
+	}
+
 	.milestone-date {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
@@ -845,6 +1380,7 @@
 		font-size: 0.875rem;
 		font-family: inherit;
 		resize: vertical;
+		min-height: 4rem;
 	}
 
 	textarea:focus {
@@ -884,17 +1420,33 @@
 		font-weight: 500;
 	}
 
-	.edit-media-section {
+	/* Shared edit section styles */
+	.edit-media-section,
+	.edit-meta-section,
+	.edit-groups-section {
 		margin-top: 1rem;
-		padding: 0.75rem 1rem;
 		border-top: 1px solid var(--color-border);
 	}
 
-	.edit-media-section h4 {
+	.edit-media-section {
+		padding: 0.75rem 1rem;
+	}
+
+	.edit-meta-section,
+	.edit-groups-section {
+		padding: 1rem 1rem 0;
+	}
+
+	.edit-media-section h4,
+	.edit-meta-section h4,
+	.edit-groups-section h4 {
 		font-size: 0.875rem;
 		font-weight: 600;
-		margin-bottom: 0.75rem;
 		color: var(--color-text);
+	}
+
+	.edit-media-section h4 {
+		margin-bottom: 0.75rem;
 	}
 
 	.no-media-hint {
@@ -905,7 +1457,7 @@
 
 	.edit-panel-footer {
 		margin-top: 1rem;
-		padding-top: 1rem;
+		padding: 1rem;
 		border-top: 1px solid var(--color-border);
 		display: flex;
 		align-items: center;
@@ -976,6 +1528,17 @@
 	.media-thumb:hover .drag-handle {
 		opacity: 1;
 	}
+
+	/* Show drag handle on touch devices */
+	@media (hover: none) and (pointer: coarse) {
+		.drag-handle {
+			opacity: 0.7;
+		}
+		
+		.media-thumb {
+			touch-action: none;
+		}
+	}
 	
 	.reorder-hint {
 		font-size: 0.75rem;
@@ -1017,32 +1580,29 @@
 		background: var(--color-error);
 	}
 
-	.add-media-btn {
-		padding: 0.5rem 1rem;
+	/* Shared add button styles */
+	.add-media-btn,
+	.add-meta-btn {
 		background: transparent;
 		border: 1px dashed var(--color-border);
-		border-radius: var(--radius-md);
 		color: var(--color-text-muted);
 		cursor: pointer;
-		font-size: 0.875rem;
 	}
 
-	.add-media-btn:hover {
+	.add-media-btn:hover,
+	.add-meta-btn:hover {
 		border-color: var(--color-primary);
 		color: var(--color-primary);
 	}
 
-	/* Meta section styles */
-	.edit-meta-section {
-		margin-top: 1rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border);
+	.add-media-btn {
+		padding: 0.5rem 1rem;
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
 	}
 
+	/* Meta section styles */
 	.edit-meta-section h4 {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: var(--color-text);
 		margin-bottom: 0.5rem;
 	}
 
@@ -1092,17 +1652,101 @@
 
 	.add-meta-btn {
 		padding: 0.375rem 0.75rem;
-		background: transparent;
-		border: 1px dashed var(--color-border);
 		border-radius: var(--radius-sm);
-		color: var(--color-text-muted);
-		cursor: pointer;
 		font-size: 0.8125rem;
 	}
 
-	.add-meta-btn:hover {
+	/* Groups section styles */
+	.edit-groups-section h4 {
+		margin-bottom: 0.25rem;
+	}
+
+	.groups-hint {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		margin-bottom: 0.5rem;
+		padding: 0 0.25rem;
+	}
+
+	.groups-dropdown-container {
+		position: relative;
+	}
+
+	.groups-dropdown-trigger {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		padding: 0.5rem 0.75rem;
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		font-size: 0.875rem;
+		color: var(--color-text);
+		transition: border-color 0.15s ease;
+	}
+
+	.groups-dropdown-trigger:hover {
 		border-color: var(--color-primary);
+	}
+
+	.groups-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.groups-count {
 		color: var(--color-primary);
+		font-weight: 600;
+	}
+
+	.groups-public {
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.dropdown-arrow {
+		font-size: 0.625rem;
+		color: var(--color-text-muted);
+	}
+
+	.groups-dropdown-panel {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		margin-top: 0.25rem;
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-md);
+		padding: 0.5rem;
+		z-index: 10;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.groups-dropdown-panel .group-checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.5rem;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		font-size: 0.8125rem;
+		color: var(--color-text);
+		transition: background-color 0.1s ease;
+	}
+
+	.groups-dropdown-panel .group-checkbox-label:hover {
+		background: var(--color-bg);
+	}
+
+	.groups-dropdown-panel .group-checkbox-label input[type="checkbox"] {
+		margin: 0;
+		cursor: pointer;
 	}
 
 	.uploader-section {
@@ -1149,29 +1793,25 @@
 		min-width: 80px;
 	}
 
-	.btn-small-primary {
+	/* Shared small button styles */
+	.btn-small-primary,
+	.btn-small-secondary {
 		padding: 0.375rem 0.75rem;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		font-size: 0.8125rem;
+	}
+
+	.btn-small-primary {
 		background: var(--color-primary);
 		color: white;
 		border: none;
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.8125rem;
 	}
 
 	.btn-small-secondary {
-		padding: 0.375rem 0.75rem;
 		background: transparent;
 		color: var(--color-text-muted);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.8125rem;
-	}
-
-	.milestone-edit-form {
-		padding: 0.75rem 1rem;
-		background: var(--color-bg-secondary);
 	}
 
 	.empty-state {
@@ -1229,6 +1869,38 @@
 			gap: 0.5rem;
 		}
 
+		.milestone-row-wrapper {
+			flex-direction: row;
+		}
+
+		.drag-handle-milestone {
+			padding: 0.75rem;
+			font-size: 1.25rem;
+			opacity: 0.6;
+			touch-action: none;
+		}
+
+		.milestone-edit-panel {
+			padding: 0;
+		}
+
+		.edit-panel-footer {
+			flex-wrap: wrap;
+			padding: 1rem 0.75rem;
+		}
+
+		.footer-buttons {
+			flex-wrap: wrap;
+			width: 100%;
+		}
+
+		.footer-buttons .btn-primary,
+		.footer-buttons .btn-secondary,
+		.footer-buttons .btn-danger {
+			flex: 1;
+			min-width: 0;
+		}
+
 		.milestone-date {
 			min-width: auto;
 		}
@@ -1264,5 +1936,80 @@
 		.btn-small-secondary {
 			width: 100%;
 		}
+
+		/* Mobile meta section styles */
+		.meta-row {
+			flex-wrap: wrap;
+			gap: 0.5rem;
+			padding: 0.75rem;
+			background: var(--color-bg);
+			border-radius: var(--radius-md);
+			position: relative;
+		}
+
+		.meta-row select {
+			flex: 1;
+			min-width: 100%;
+			padding: 0.5rem 0.75rem;
+			font-size: 0.9375rem;
+		}
+
+		.meta-row input {
+			min-width: 100%;
+			padding: 0.5rem 0.75rem;
+			font-size: 0.9375rem;
+		}
+
+		.meta-row .icon-field {
+			width: 100%;
+			text-align: left;
+		}
+
+		.meta-remove-btn {
+			position: absolute;
+			top: 0.5rem;
+			right: 0.5rem;
+			width: 28px;
+			height: 28px;
+			font-size: 1.125rem;
+			background: var(--color-bg-secondary);
+			opacity: 1;
+		}
+
+		.add-meta-btn {
+			width: 100%;
+			padding: 0.75rem 1rem;
+			font-size: 0.9375rem;
+			margin-top: 0.5rem;
+		}
+	}
+
+	/* Global styles for touch drag clone (appended to body) */
+	:global(.touch-drag-clone) {
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+		background: var(--color-bg-elevated);
+	}
+
+	:global(.touch-drag-clone img) {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	:global(.touch-drag-clone .drag-handle),
+	:global(.touch-drag-clone .delete-media-form) {
+		display: none;
+	}
+
+	/* Global styles for milestone touch drag clone */
+	:global(.touch-milestone-drag-clone) {
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+	}
+
+	:global(.touch-milestone-drag-clone .drag-handle-milestone) {
+		visibility: hidden;
 	}
 </style>

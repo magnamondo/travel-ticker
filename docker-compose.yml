@@ -1,12 +1,56 @@
 services:
+  # Caddy reverse proxy with rate limiting
+  caddy:
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile
+    container_name: travel-ticker-caddy
+    restart: unless-stopped
+    ports:
+      - "${PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+      # Mount application data volume so Caddy can serve uploads directly (X-Sendfile)
+      # Mounted as read-only (:ro) for security
+      - travel-ticker-data:/internal-data:ro
+    environment:
+      # Set to your domain for automatic HTTPS, or leave as localhost for HTTP
+      - CADDY_DOMAIN=${CADDY_DOMAIN:-localhost}
+    depends_on:
+      travel-ticker:
+        condition: service_healthy
+    networks:
+      - travel-ticker-net
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Main application
   travel-ticker:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: travel-ticker
     restart: unless-stopped
-    ports:
-      - "${PORT:-3000}:3000"
+    # No external ports - only accessible via Caddy
+    expose:
+      - "3000"
     volumes:
       # Persistent data volume for database and uploads
       - travel-ticker-data:/app/data
@@ -14,34 +58,37 @@ services:
       # Node environment
       - NODE_ENV=production
       - PORT=3000
-      
+
       # IMPORTANT: Set this to your actual domain for CSRF protection
-      - ORIGIN=${ORIGIN:-http://localhost:3000}
-      
+      # Must match CADDY_DOMAIN (with https:// prefix if using HTTPS)
+      - ORIGIN=${ORIGIN:-http://localhost}
+
       # Database configuration
       # SQLite database path (inside the container)
       - DATABASE_URL=/app/data/db/database.db
-      
+
       # Data directory for uploads
       - DATA_DIR=/app/data
-      
+
       # Email service (Resend) - optional
       # Get your API key from https://resend.com
       - RESEND_API_KEY=${RESEND_API_KEY:-}
-      
+
       # Admin user - this email gets admin role on registration
       - ADMIN_EMAIL=${ADMIN_EMAIL:-}
-    
+    networks:
+      - travel-ticker-net
+
     # Resource limits
     deploy:
       resources:
         limits:
           cpus: '2'
-          memory: 2G
+          memory: 5G
         reservations:
           cpus: '0.5'
-          memory: 512M
-    
+          memory: 1G
+
     # Healthcheck using Node.js (wget/curl not in Alpine)
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
@@ -49,13 +96,17 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    
+
     # Logging configuration
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  travel-ticker-net:
+    driver: bridge
 
 volumes:
   travel-ticker-data:
@@ -65,3 +116,9 @@ volumes:
     #   docker run --rm -v travel-ticker-data:/data -v $(pwd):/backup alpine tar czf /backup/travel-ticker-backup-$(date +%Y%m%d).tar.gz /data
     # Or use a bind mount to a directory that's included in your backup system:
     #   - /path/to/backups/travel-ticker:/app/data
+
+  caddy-data:
+    driver: local
+
+  caddy-config:
+    driver: local
