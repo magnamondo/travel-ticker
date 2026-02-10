@@ -340,10 +340,12 @@
 				}
 			});
 
+			if (onUploadComplete) await onUploadComplete(uploadResult);
+
 			uploadState = 'completed';
 			result = uploadResult;
 			retryInfo = null;
-			onUploadComplete?.(uploadResult);
+
 			onAllUploadsComplete?.([uploadResult]);
 		} catch (err) {
 			retryInfo = null;
@@ -462,12 +464,13 @@
 					}
 				});
 				
+				if (onUploadComplete) await onUploadComplete(uploadResult);
+
 				uploadQueueStore.updateFile(queueKey, item.id, {
 					state: 'completed',
 					result: uploadResult
 				});
 				uploadQueueStore.addResult(queueKey, uploadResult);
-				onUploadComplete?.(uploadResult);
 			} catch (err) {
 				if ((err as Error).message === 'Upload cancelled') {
 					uploadQueueStore.updateFile(queueKey, item.id, { state: 'idle' });
@@ -532,12 +535,13 @@
 				}
 			});
 			
+			if (onUploadComplete) await onUploadComplete(uploadResult);
+
 			uploadQueueStore.updateFile(queueKey, item.id, {
 				state: 'completed',
 				result: uploadResult
 			});
 			uploadQueueStore.addResult(queueKey, uploadResult);
-			onUploadComplete?.(uploadResult);
 		} catch (err) {
 			if ((err as Error).message === 'Upload cancelled') {
 				uploadQueueStore.updateFile(queueKey, item.id, { state: 'idle' });
