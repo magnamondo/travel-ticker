@@ -9,8 +9,11 @@ ROLE=${1:-server}
 
 if [ "$ROLE" = "worker" ]; then
     echo "🎬 Starting Video Worker..."
-    # Execute directly - worker handles its own signals
-    exec npx tsx src/worker/video-worker.ts
+    echo "   Node version: $(node --version)"
+    echo "   Database: ${DATABASE_URL:-data/db/database.db}"
+    # Execute pre-compiled worker directly - handles its own signals
+    # --enable-source-maps for readable stack traces in production
+    exec node --enable-source-maps build/worker.mjs
 else
     # Default to Server role
     echo "🚀 Starting Web Server..."
