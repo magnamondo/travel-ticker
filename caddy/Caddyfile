@@ -4,7 +4,7 @@
 {
 	# Global options
 	admin off
-	
+
 	# Global log level (reduces startup/module noise)
 	log {
 		level WARN
