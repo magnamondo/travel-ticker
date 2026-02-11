@@ -401,7 +401,7 @@
 							</div>
 						{/if}
 						<div class="timeline-content">
-							<a href="/entry/{milestone.id}" style="text-decoration: none; color: inherit; display: block;">
+							<a href={resolve(`/entry/${milestone.id}`)} style="text-decoration: none; color: inherit; display: block;">
 								<div class="card">
 									{#if !milestone.published}
 										<div class="draft-badge" title="Draft - not visible to others">

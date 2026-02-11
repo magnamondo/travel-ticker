@@ -35,3 +35,21 @@ When asked to build "robust", "battle-proof", or "production-ready" features, do
 - Consider UX during failures: what does the user see? can they recover?
 - Test your mental model before writing code - trace the data flow
 - Ask about specific failure scenarios if requirements are vague
+
+## SvelteKit Navigation
+
+**Use `resolve()` from `$app/paths` for internal links.** When linking between pages, use:
+```svelte
+<script>
+  import { resolve } from '$app/paths';
+</script>
+
+<a href={resolve(`/entry/${id}`)}>Link</a>
+```
+Not:
+```svelte
+<a href="/entry/{id}">Link</a>
+```
+
+The `resolve()` function ensures proper client-side navigation that correctly re-runs load functions and respects the base path. Without it, navigation may serve stale cached data or fail to trigger load function re-runs.
+

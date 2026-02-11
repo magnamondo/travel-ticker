@@ -7,13 +7,7 @@ import { nanoid } from 'nanoid';
 import { canComment, canReact, isAdmin } from '$lib/roles';
 import { canUserAccessMilestone } from '$lib/server/groups';
 
-export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) => {
-	// Cache the entry page for 1 hour, but allow invalidation via 'entry-[id]' tag
-	setHeaders({
-		'Cache-Control': 'public, max-age=3600',
-		'Surrogate-Key': `entry-${params.id}`
-	});
-
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// Fetch milestone with segment
 	const milestoneResult = await db
 		.select({
