@@ -683,10 +683,10 @@
 								class:editing={editingMilestoneId === milestone.id}
 								class:dragging={draggingMilestoneId === milestone.id || touchDraggingMilestoneId === milestone.id}
 								class:drag-over={dragOverMilestoneId === milestone.id || touchDragOverMilestoneId === milestone.id}
-								class:draggable={hasSameDayNeighbors(milestone.id, group.milestones)}
+								class:draggable={hasSameDayNeighbors(milestone.id, group.milestones) && editingMilestoneId !== milestone.id}
 								data-milestone-id={milestone.id}
 								data-milestone-date={milestone.date.toISOString()}
-								draggable={hasSameDayNeighbors(milestone.id, group.milestones)}
+								draggable={hasSameDayNeighbors(milestone.id, group.milestones) && editingMilestoneId !== milestone.id}
 								ondragstart={(e) => handleMilestoneDragStart(e, milestone.id, group.milestones)}
 								ondragover={(e) => handleMilestoneDragOver(e, milestone.id, milestone.date)}
 								ondragleave={handleMilestoneDragLeave}

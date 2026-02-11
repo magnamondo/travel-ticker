@@ -1,13 +1,22 @@
-# Build stage
-FROM node:24-alpine AS builder
+# =============================================================================
+# STAGE 1: Dependencies (shared by all targets)
+# =============================================================================
+FROM node:24-alpine AS deps
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install all dependencies (needed for build)
 RUN npm ci
+
+# =============================================================================
+# STAGE 2: Build SvelteKit app (only for server)
+# =============================================================================
+FROM deps AS builder
+
+WORKDIR /app
 
 # Copy source code
 COPY . .
@@ -16,13 +25,15 @@ COPY . .
 # DATABASE_URL is required by SvelteKit's build analysis but not actually used
 RUN DATABASE_URL=build-placeholder npm run build
 
-# Production stage
-FROM node:24-alpine AS runner
+# =============================================================================
+# STAGE 3: Server runtime (full app with SvelteKit)
+# =============================================================================
+FROM node:24-alpine AS server
 
 WORKDIR /app
 
-# Install ffmpeg for video transcoding and ImageMagick with HEIF support for HEIC conversion
-RUN apk add --no-cache ffmpeg imagemagick libheif
+# Install ImageMagick with HEIF support for image processing (HEIC conversion, thumbnails, resizing)
+RUN apk add --no-cache imagemagick libheif
 
 # Copy built application and package files from builder stage
 COPY --from=builder /app/build build/
@@ -66,3 +77,37 @@ VOLUME ["/app/data"]
 
 # Run both the HTTP server and video worker
 CMD ["./docker-entrypoint.sh"]
+
+# =============================================================================
+# STAGE 4: Worker runtime (lightweight, no SvelteKit build needed)
+# =============================================================================
+FROM node:24-alpine AS worker
+
+WORKDIR /app
+
+# Install ffmpeg for video transcoding and ImageMagick with HEIF support for HEIC conversion
+RUN apk add --no-cache ffmpeg imagemagick libheif
+
+# Copy package files and install only what worker needs
+COPY package*.json ./
+RUN npm ci --omit=dev && npm install tsx drizzle-orm
+
+# Copy worker source and database schema
+COPY src/worker src/worker/
+COPY src/lib/server/db src/lib/server/db/
+COPY tsconfig.json ./
+COPY docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
+# Create data directories
+RUN mkdir -p /app/data/db /app/data/uploads
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV DATABASE_URL=/app/data/db/database.db
+ENV DATA_DIR=/app/data
+
+# Declare volume for data persistence
+VOLUME ["/app/data"]
+
+CMD ["./docker-entrypoint.sh", "worker"]
