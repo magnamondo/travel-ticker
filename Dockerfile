@@ -32,8 +32,8 @@ FROM node:24-alpine AS server
 
 WORKDIR /app
 
-# Install ffmpeg for video transcoding and ImageMagick with HEIF support for HEIC conversion
-RUN apk add --no-cache ffmpeg imagemagick libheif
+# Install ImageMagick with HEIF support for image processing (HEIC conversion, thumbnails, resizing)
+RUN apk add --no-cache imagemagick libheif
 
 # Copy built application and package files from builder stage
 COPY --from=builder /app/build build/
