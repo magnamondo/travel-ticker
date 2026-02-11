@@ -22,7 +22,7 @@
 	# All zones are evaluated - requests must pass all matching zones
 	rate_limit {
 		# Global rate limit: 100 requests per second per IP
-		# Protects against general flooding
+		# Protects against general flooding/DDoS
 		zone global {
 			key {remote_host}
 			events 100
@@ -40,16 +40,26 @@
 			window 1m
 		}
 
-		# API endpoints: 60 requests per minute per IP
-		zone api {
+		# Upload endpoints: key by session cookie (each authenticated user = own bucket)
+		# Anonymous requests are rejected by backend, so no rate limit key needed for them
+		zone upload {
 			match {
-				path /api/*
+				path /api/upload /api/upload/*
 			}
-			key {remote_host}
-			events 60
+			key {http.request.cookie.auth-session}
+			events 1200
 			window 1m
 		}
 	}
+
+	# Reject protected endpoints without auth cookie (defense-in-depth)
+	# Backend still validates the session, but this saves resources on obvious rejects
+	@no_auth_cookie {
+		path /api/upload/* /admin/*
+		not header Cookie *auth-session*
+	}
+	respond @no_auth_cookie 401
+
 	# Reverse proxy to the application
 	reverse_proxy travel-ticker:3000 {
 		# X-Sendfile implementation:

@@ -15,15 +15,79 @@ const DATA_DIR = process.env.DATA_DIR || 'data';
 const CHUNK_DIR = join(DATA_DIR, 'uploads', 'chunks');
 const UPLOAD_DIR = join(DATA_DIR, 'uploads');
 
+interface UploadErrorContext {
+	sessionId?: string;
+	chunkIndex?: number;
+	filename?: string;
+	fileSize?: number;
+	reason: string;
+	details?: Record<string, unknown>;
+}
+
+function logUploadError(context: UploadErrorContext, clientIp?: string): void {
+	const entry = {
+		timestamp: new Date().toISOString(),
+		type: 'UPLOAD_ERROR',
+		clientIp: clientIp || 'unknown',
+		...context
+	};
+	console.error(JSON.stringify(entry));
+}
+
+function getClientIp(request: Request): string {
+	return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
+		|| request.headers.get('x-real-ip') 
+		|| 'unknown';
+}
+
+function isConnectionDropError(err: unknown): boolean {
+	const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+	const name = (err instanceof Error ? err.name : '').toLowerCase();
+	return (
+		name === 'aborterror' ||
+		message.includes('aborted') ||
+		message.includes('econnreset') ||
+		message.includes('epipe') ||
+		message.includes('connection') ||
+		message.includes('socket hang up') ||
+		message.includes('client disconnected')
+	);
+}
+
 // POST: Upload a single chunk
 export const POST: RequestHandler = async ({ request }) => {
-	const formData = await request.formData();
+	const clientIp = getClientIp(request);
+	
+	// Parse form data with connection drop detection
+	let formData: FormData;
+	try {
+		formData = await request.formData();
+	} catch (err) {
+		if (isConnectionDropError(err)) {
+			logUploadError({
+				reason: 'connection_dropped',
+				details: { 
+					error: err instanceof Error ? err.message : String(err),
+					stage: 'parsing_formdata'
+				}
+			}, clientIp);
+			throw error(499, 'Client closed connection');
+		}
+		throw err;
+	}
+	
 	const sessionId = formData.get('sessionId') as string;
 	const chunkIndex = parseInt(formData.get('chunkIndex') as string);
 	const chunkData = formData.get('chunk') as File;
-	const chunkChecksum = formData.get('checksum') as string; // Optional MD5 checksum
+	const chunkChecksum = formData.get('checksum') as string; // Optional checksum
 
 	if (!sessionId || isNaN(chunkIndex) || !chunkData) {
+		logUploadError({
+			sessionId: sessionId || undefined,
+			chunkIndex: isNaN(chunkIndex) ? undefined : chunkIndex,
+			reason: 'missing_fields',
+			details: { hasSessionId: !!sessionId, hasChunkIndex: !isNaN(chunkIndex), hasChunkData: !!chunkData }
+		}, clientIp);
 		throw error(400, 'Missing required fields: sessionId, chunkIndex, chunk');
 	}
 
@@ -31,18 +95,36 @@ export const POST: RequestHandler = async ({ request }) => {
 	const [session] = await db.select().from(uploadSession).where(eq(uploadSession.id, sessionId));
 
 	if (!session) {
+		logUploadError({ sessionId, chunkIndex, reason: 'session_not_found' }, clientIp);
 		throw error(404, 'Upload session not found');
 	}
 
 	if (session.status === 'completed') {
+		logUploadError({ 
+			sessionId, chunkIndex, 
+			filename: session.filename,
+			reason: 'already_completed' 
+		}, clientIp);
 		throw error(400, 'Upload already completed');
 	}
 
 	if (session.expiresAt < new Date()) {
+		logUploadError({ 
+			sessionId, chunkIndex, 
+			filename: session.filename,
+			reason: 'session_expired',
+			details: { expiresAt: session.expiresAt.toISOString() }
+		}, clientIp);
 		throw error(410, 'Upload session expired');
 	}
 
 	if (chunkIndex < 0 || chunkIndex >= session.totalChunks) {
+		logUploadError({
+			sessionId, chunkIndex,
+			filename: session.filename,
+			reason: 'invalid_chunk_index',
+			details: { totalChunks: session.totalChunks }
+		}, clientIp);
 		throw error(400, `Invalid chunk index. Expected 0-${session.totalChunks - 1}`);
 	}
 
@@ -57,14 +139,42 @@ export const POST: RequestHandler = async ({ request }) => {
 		});
 	}
 
-	// Read chunk data
-	const buffer = Buffer.from(await chunkData.arrayBuffer());
+	// Read chunk data with connection drop detection
+	let buffer: Buffer;
+	try {
+		buffer = Buffer.from(await chunkData.arrayBuffer());
+	} catch (err) {
+		if (isConnectionDropError(err)) {
+			logUploadError({
+				sessionId, chunkIndex,
+				filename: session.filename,
+				reason: 'connection_dropped',
+				details: { 
+					error: err instanceof Error ? err.message : String(err),
+					stage: 'reading_chunk_data'
+				}
+			}, clientIp);
+			throw error(499, 'Client closed connection');
+		}
+		throw err;
+	}
 
 	// Verify checksum if provided
 	if (chunkChecksum) {
 		// Use SHA-256 truncated to 32 chars to match client-side computation
 		const computedChecksum = createHash('sha256').update(buffer).digest('hex').substring(0, 32);
 		if (computedChecksum !== chunkChecksum) {
+			logUploadError({
+				sessionId, chunkIndex,
+				filename: session.filename,
+				fileSize: session.fileSize,
+				reason: 'checksum_mismatch',
+				details: { 
+					expected: chunkChecksum, 
+					computed: computedChecksum,
+					chunkSize: buffer.length
+				}
+			}, clientIp);
 			throw error(400, 'Chunk checksum mismatch - data corrupted during transfer');
 		}
 	}
@@ -77,6 +187,11 @@ export const POST: RequestHandler = async ({ request }) => {
 	// Re-fetch session to get latest uploadedChunks (avoid race condition with parallel uploads)
 	const [latestSession] = await db.select().from(uploadSession).where(eq(uploadSession.id, sessionId));
 	if (!latestSession) {
+		logUploadError({ 
+			sessionId, chunkIndex,
+			filename: session.filename, 
+			reason: 'session_disappeared_after_write'
+		}, clientIp);
 		throw error(404, 'Upload session not found');
 	}
 
@@ -109,16 +224,19 @@ export const POST: RequestHandler = async ({ request }) => {
 
 // PUT: Complete the upload - assemble chunks into final file
 export const PUT: RequestHandler = async ({ request }) => {
+	const clientIp = getClientIp(request);
 	const body = await request.json();
 	const { sessionId, fileChecksum } = body;
 
 	if (!sessionId) {
+		logUploadError({ reason: 'missing_session_id_on_complete' }, clientIp);
 		throw error(400, 'Missing sessionId');
 	}
 
 	const [session] = await db.select().from(uploadSession).where(eq(uploadSession.id, sessionId));
 
 	if (!session) {
+		logUploadError({ sessionId, reason: 'session_not_found_on_complete' }, clientIp);
 		throw error(404, 'Upload session not found');
 	}
 
@@ -138,6 +256,18 @@ export const PUT: RequestHandler = async ({ request }) => {
 				missing.push(i);
 			}
 		}
+		logUploadError({
+			sessionId,
+			filename: session.filename,
+			fileSize: session.fileSize,
+			reason: 'missing_chunks_on_complete',
+			details: { 
+				uploaded: session.uploadedChunks.length, 
+				total: session.totalChunks,
+				missingCount: missing.length,
+				missingSample: missing.slice(0, 10)
+			}
+		}, clientIp);
 		throw error(400, `Missing chunks: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '...' : ''}`);
 	}
 
@@ -148,6 +278,13 @@ export const PUT: RequestHandler = async ({ request }) => {
 	for (let i = 0; i < session.totalChunks; i++) {
 		const chunkPath = join(sessionDir, `chunk_${i.toString().padStart(6, '0')}`);
 		if (!existsSync(chunkPath)) {
+			logUploadError({
+				sessionId,
+				chunkIndex: i,
+				filename: session.filename,
+				reason: 'chunk_file_missing',
+				details: { path: chunkPath }
+			}, clientIp);
 			throw error(500, `Chunk ${i} file missing`);
 		}
 		chunks.push(await readFile(chunkPath));
@@ -157,6 +294,13 @@ export const PUT: RequestHandler = async ({ request }) => {
 
 	// Verify file size
 	if (fileBuffer.length !== session.fileSize) {
+		logUploadError({
+			sessionId,
+			filename: session.filename,
+			fileSize: session.fileSize,
+			reason: 'file_size_mismatch',
+			details: { expected: session.fileSize, actual: fileBuffer.length }
+		}, clientIp);
 		throw error(400, `File size mismatch: expected ${session.fileSize}, got ${fileBuffer.length}`);
 	}
 
@@ -166,6 +310,13 @@ export const PUT: RequestHandler = async ({ request }) => {
 	// Verify checksum if provided
 	if (fileChecksum) {
 		if (computedChecksum !== fileChecksum) {
+			logUploadError({
+				sessionId,
+				filename: session.filename,
+				fileSize: session.fileSize,
+				reason: 'file_checksum_mismatch',
+				details: { expected: fileChecksum, computed: computedChecksum }
+			}, clientIp);
 			throw error(400, 'File checksum mismatch - data corrupted');
 		}
 	}

@@ -106,12 +106,15 @@ const handleLogging: Handle = async ({ event, resolve }) => {
 
 	// Skip logging for static assets and successful HEAD requests (healthchecks)
 	const path = event.url.pathname;
+	const isChunkUpload = path === '/api/upload/chunk';
 	if (!path.startsWith('/_app/') && !path.startsWith('/favicon') && !(event.request.method === 'HEAD' && response.status === 200)) {
 		// Only log 4xx and 5xx errors or slow requests (> 500ms) in production
+		// Skip successful chunk uploads (they're noisy and expected to be slow)
 		const isError = response.status >= 400;
 		const isSlow = duration > 500;
+		const isSuccessfulChunkUpload = isChunkUpload && response.status < 400;
 		
-		if (isError || isSlow || process.env.NODE_ENV !== 'production') {
+		if ((isError || isSlow || process.env.NODE_ENV !== 'production') && !isSuccessfulChunkUpload) {
 			logger.request(
 				event.request.method,
 				path,
