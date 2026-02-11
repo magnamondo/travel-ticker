@@ -50,6 +50,16 @@
 			events 1200
 			window 1m
 		}
+
+		# Client error reporting: 10 per minute per IP (prevent abuse)
+		zone client_error {
+			match {
+				path /api/client-error
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
 	}
 
 	# Reject protected endpoints without auth cookie (defense-in-depth)
