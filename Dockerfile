@@ -35,24 +35,23 @@ WORKDIR /app
 # Install ImageMagick with HEIF support for image processing (HEIC conversion, thumbnails, resizing)
 RUN apk add --no-cache imagemagick libheif
 
-# Copy built application and package files from builder stage
+# Copy only what's needed for production:
+# - build/         → SvelteKit server + pre-compiled worker
+# - package*.json  → for npm ci
+# - drizzle/       → migration SQL files
+# - drizzle.config.ts + src/lib/server/db/ + tsconfig.json → for drizzle-kit push
 COPY --from=builder /app/build build/
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/drizzle drizzle/
-
-# Copy the video worker source (will be run with tsx)
-COPY --from=builder /app/src/worker src/worker/
-# Copy db schema for drizzle-kit migrations
 COPY --from=builder /app/src/lib/server/db src/lib/server/db/
 COPY --from=builder /app/tsconfig.json ./
 # Copy utility scripts
 COPY --from=builder /app/scripts scripts/
 
-# Install production dependencies plus tools needed for runtime
-# - tsx: for running the video worker TypeScript
-# - drizzle-kit + drizzle-orm: for database migrations
-RUN npm ci --omit=dev && npm install tsx drizzle-kit drizzle-orm
+# Install production dependencies + drizzle-kit for migrations
+# No tsx/esbuild needed - worker is pre-compiled in build stage
+RUN npm ci --omit=dev && npm install drizzle-kit drizzle-orm
 
 # Create separate directories for database (private) and uploads (public)
 # Database is NOT in the uploads path to prevent any path traversal attacks
@@ -79,7 +78,7 @@ VOLUME ["/app/data"]
 CMD ["./docker-entrypoint.sh"]
 
 # =============================================================================
-# STAGE 4: Worker runtime (lightweight, no SvelteKit build needed)
+# STAGE 4: Worker runtime (lightweight, uses pre-compiled worker)
 # =============================================================================
 FROM node:24-alpine AS worker
 
@@ -88,15 +87,17 @@ WORKDIR /app
 # Install ffmpeg for video transcoding and ImageMagick with HEIF support for HEIC conversion
 RUN apk add --no-cache ffmpeg imagemagick libheif
 
-# Copy package files and install only what worker needs
-COPY package*.json ./
-RUN npm ci --omit=dev && npm install tsx drizzle-orm
+# Copy only what's needed:
+# - Pre-compiled worker from builder
+# - Package files for native deps (better-sqlite3)
+COPY --from=builder /app/build/worker.mjs build/
+COPY --from=builder /app/package*.json ./
 
-# Copy worker source and database schema
-COPY src/worker src/worker/
-COPY src/lib/server/db src/lib/server/db/
-COPY tsconfig.json ./
-COPY docker-entrypoint.sh ./
+# Install only production dependencies (no tsx/esbuild needed)
+RUN npm ci --omit=dev
+
+# Copy entrypoint
+COPY --from=builder /app/docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 
 # Create data directories

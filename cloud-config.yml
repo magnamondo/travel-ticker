@@ -196,6 +196,7 @@ runcmd:
   - ufw allow ssh
   - ufw allow 80/tcp
   - ufw allow 443/tcp
+  - ufw allow 443/udp   # HTTP/3 (QUIC)
   - ufw --force enable
 
   # Install Docker using official script

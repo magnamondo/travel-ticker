@@ -9,6 +9,7 @@ services:
     ports:
       - "${PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"  # HTTP/3 (QUIC) requires UDP
     volumes:
       - caddy-data:/data
       - caddy-config:/config
