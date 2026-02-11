@@ -119,7 +119,9 @@ export const comment = sqliteTable('comment', {
 		.references(() => user.id, { onDelete: 'set null' }),
 	authorName: text('author_name').notNull(),
 	content: text('content').notNull(),
-	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
+	createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp' }),
+	isHidden: integer('is_hidden', { mode: 'boolean' }).default(false).notNull()
 });
 
 export const reaction = sqliteTable('reaction', {

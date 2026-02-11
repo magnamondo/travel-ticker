@@ -36,6 +36,13 @@
       "when": 1770653323439,
       "tag": "0004_skinny_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1770845798989,
+      "tag": "0005_hesitant_vance_astro",
+      "breakpoints": true
     }
   ]
 }

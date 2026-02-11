@@ -25,6 +25,7 @@
 			<a href="/admin/entries" onclick={() => (menuOpen = false)}>Entries</a>
 			<a href="/admin/users" onclick={() => (menuOpen = false)}>Users</a>
 			<a href="/admin/groups" onclick={() => (menuOpen = false)}>Groups</a>
+			<a href="/admin/comments" onclick={() => (menuOpen = false)}>Comments</a>
 			<a href="/admin/jobs" onclick={() => (menuOpen = false)}>Video Jobs</a>
 		</nav>
 		<div class="admin-back">

@@ -22,6 +22,10 @@
 			<span class="stat-value">{data.userCount}</span>
 			<span class="stat-label">Users</span>
 		</div>
+		<div class="stat-card">
+			<span class="stat-value">{data.commentCount}</span>
+			<span class="stat-label">Comments</span>
+		</div>
 	</div>
 
 	<div class="quick-actions">
@@ -29,6 +33,7 @@
 		<div class="actions">
 			<a href="/admin/entries" class="action-btn">Manage Entries</a>
 			<a href="/admin/users" class="action-btn">Manage Users</a>
+			<a href="/admin/comments" class="action-btn">Moderate Comments</a>
 		</div>
 	</div>
 </div>
