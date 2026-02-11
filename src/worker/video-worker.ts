@@ -22,6 +22,15 @@ config();
 // Initialize database connection
 const DATABASE_URL = process.env.DATABASE_URL || 'data/db/database.db';
 const sqlite = new Database(DATABASE_URL);
+
+// Enable WAL mode for better concurrency (allows reads while writing)
+// Required for multi-process access (web server + video worker)
+sqlite.pragma('journal_mode = WAL');
+
+// Set busy timeout to 5 seconds - throws error instead of blocking forever
+// This ensures we get a visible error instead of a frozen process
+sqlite.pragma('busy_timeout = 5000');
+
 const db = drizzle(sqlite);
 
 // Import schema (inline to avoid SvelteKit imports)

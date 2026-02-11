@@ -8,18 +8,6 @@
  * to ensure crashes are logged before the process exits.
  */
 
-import { writeFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
-
-const DATA_DIR = process.env.DATA_DIR || 'data';
-const CRASH_LOG_DIR = join(DATA_DIR, 'logs');
-const CRASH_LOG_FILE = join(CRASH_LOG_DIR, 'crash.log');
-
-// Ensure log directory exists
-if (!existsSync(CRASH_LOG_DIR)) {
-	mkdirSync(CRASH_LOG_DIR, { recursive: true });
-}
-
 /**
  * Log a crash event with full details
  */
@@ -61,13 +49,12 @@ function logCrash(type, error, origin) {
 	console.error(crashEntry.error.stack);
 	console.error('\x1b[31m' + '='.repeat(60) + '\x1b[0m\n');
 	
-	// Append to crash log file
+	// Log JSON to stderr for Docker logs
 	try {
-		const logLine = JSON.stringify(crashEntry) + '\n';
-		appendFileSync(CRASH_LOG_FILE, logLine);
-		console.error(`📝 Crash logged to ${CRASH_LOG_FILE}`);
+		const logLine = JSON.stringify(crashEntry);
+		console.error(logLine);
 	} catch (writeError) {
-		console.error('Failed to write crash log:', writeError);
+		console.error('Failed to log crash:', writeError);
 	}
 }
 
@@ -133,8 +120,8 @@ process.on('SIGTERM', () => {
 			pid: process.pid,
 			message: 'Graceful shutdown requested',
 			uptime: Math.round(process.uptime()) + 's',
-		}) + '\n';
-		appendFileSync(CRASH_LOG_FILE, logLine);
+		});
+		console.log(logLine); // Output JSON to stdout
 	} catch {
 		// Ignore write errors during shutdown
 	}
@@ -147,6 +134,26 @@ process.on('SIGTERM', () => {
  */
 process.on('SIGINT', () => {
 	console.log('\n⏹️  Received SIGINT - shutting down');
+});
+
+/**
+ * Log unexpected exits with exit code
+ * This fires for any exit, including those we can't catch otherwise
+ */
+process.on('exit', (code) => {
+	if (code !== 0) {
+		const timestamp = new Date().toISOString();
+		const logLine = JSON.stringify({
+			timestamp,
+			type: 'EXIT',
+			pid: process.pid,
+			exitCode: code,
+			message: `Process exiting with code ${code}`,
+			uptime: Math.round(process.uptime()) + 's',
+		});
+		// Note: Only synchronous operations work in 'exit' handler
+		process.stderr.write(logLine + '\n');
+	}
 });
 
 /**
@@ -176,7 +183,6 @@ setInterval(() => {
 
 // Log startup
 console.log('🛡️  Server wrapper initialized with crash detection');
-console.log(`   Crash logs: ${CRASH_LOG_FILE}`);
 
 // Import and run the actual server
 const serverPath = new URL('../build/index.js', import.meta.url);
