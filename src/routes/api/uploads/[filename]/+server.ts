@@ -5,6 +5,11 @@ import { stat, realpath } from 'fs/promises';
 import { createReadStream, existsSync } from 'fs';
 import { join } from 'path';
 import { Readable } from 'stream';
+import { db } from '$lib/server/db';
+import { milestoneMedia, milestoneGroup } from '$lib/server/db/schema';
+import { eq, inArray } from 'drizzle-orm';
+import { getUserGroupIds } from '$lib/server/groups';
+import { isAdmin } from '$lib/roles';
 
 // Use data directory for persistence (works with Docker volume)
 const DATA_DIR = process.env.DATA_DIR || 'data';
@@ -26,11 +31,45 @@ const MIME_TYPES: Record<string, string> = {
 	'pdf': 'application/pdf',
 };
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ params, locals }) => {
 	const { filename } = params;
 	
 	if (!filename) {
 		throw error(400, 'Filename required');
+	}
+
+	// Check group-based access control
+	const mediaUrl = `/api/uploads/${filename}`;
+	const mediaRecords = await db
+		.select({ milestoneId: milestoneMedia.milestoneId })
+		.from(milestoneMedia)
+		.where(eq(milestoneMedia.url, mediaUrl));
+
+	if (mediaRecords.length > 0) {
+		// Check if any of the milestones are group-restricted
+		const milestoneIds = [...new Set(mediaRecords.map(m => m.milestoneId))];
+		const restrictions = await db
+			.select({ milestoneId: milestoneGroup.milestoneId, groupId: milestoneGroup.groupId })
+			.from(milestoneGroup)
+			.where(inArray(milestoneGroup.milestoneId, milestoneIds));
+
+		if (restrictions.length > 0) {
+			// File belongs to group-restricted milestone(s)
+			// Admins can access all
+			if (locals.user && isAdmin(locals.user.roles)) {
+				// Allow
+			} else if (!locals.user) {
+				throw error(401, 'Authentication required');
+			} else {
+				// Check if user is in any of the required groups
+				const requiredGroupIds = [...new Set(restrictions.map(r => r.groupId))];
+				const userGroupIds = await getUserGroupIds(locals.user.id);
+				const hasAccess = requiredGroupIds.some(gid => userGroupIds.includes(gid));
+				if (!hasAccess) {
+					throw error(403, 'You do not have access to this file');
+				}
+			}
+		}
 	}
 
 	// Security: prevent directory traversal

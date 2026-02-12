@@ -90,7 +90,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 };
 
 // GET: Get upload session status (for resuming)
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
+	if (!locals.user) {
+		throw error(401, 'Not authenticated');
+	}
+	if (!isAdmin(locals.user.roles)) {
+		throw error(403, 'Only administrators can view upload sessions');
+	}
+
 	const sessionId = url.searchParams.get('sessionId');
 
 	if (!sessionId) {
@@ -123,7 +130,14 @@ export const GET: RequestHandler = async ({ url }) => {
 };
 
 // DELETE: Cancel an upload session
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, locals }) => {
+	if (!locals.user) {
+		throw error(401, 'Not authenticated');
+	}
+	if (!isAdmin(locals.user.roles)) {
+		throw error(403, 'Only administrators can cancel uploads');
+	}
+
 	const sessionId = url.searchParams.get('sessionId');
 
 	if (!sessionId) {
