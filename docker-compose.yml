@@ -20,7 +20,7 @@ services:
       # Set to your domain for automatic HTTPS, or leave as localhost for HTTP
       - CADDY_DOMAIN=${CADDY_DOMAIN:-localhost}
     depends_on:
-      travel-ticker:
+      app:
         condition: service_healthy
     networks:
       - travel-ticker-net
@@ -43,7 +43,7 @@ services:
         max-file: "3"
 
   # Main application
-  travel-ticker:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
@@ -108,7 +108,7 @@ services:
         max-file: "3"
 
   # Video processing worker
-  travel-ticker-worker:
+  worker:
     build:
       context: .
       dockerfile: Dockerfile
@@ -128,7 +128,7 @@ services:
       - travel-ticker-net
     # Wait for main app to be healthy (migrations complete)
     depends_on:
-      travel-ticker:
+      app:
         condition: service_healthy
     deploy:
       resources:
@@ -145,7 +145,7 @@ services:
         max-file: "3"
 
   # Notification worker (email sending)
-  travel-ticker-notification-worker:
+  notification-worker:
     build:
       context: .
       dockerfile: Dockerfile
@@ -163,7 +163,7 @@ services:
     networks:
       - travel-ticker-net
     depends_on:
-      travel-ticker:
+      app:
         condition: service_healthy
     deploy:
       resources:

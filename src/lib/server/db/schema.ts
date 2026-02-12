@@ -44,7 +44,8 @@ export const notificationQueue = sqliteTable('notification_queue', {
 	groupKey: text('group_key').notNull(),
 	// JSON payload for the email template
 	payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
-	status: text('status', { enum: ['pending', 'cancelled', 'sent', 'failed'] }).notNull().default('pending'),
+	// Status: skipped = processed but no recipients (no subscribers or no group access)
+	status: text('status', { enum: ['pending', 'cancelled', 'sent', 'failed', 'skipped'] }).notNull().default('pending'),
 	// Don't send before this time (allows cancellation window)
 	sendAfter: integer('send_after', { mode: 'timestamp' }).notNull(),
 	// How many times this notification has been extended (for exponential backoff)

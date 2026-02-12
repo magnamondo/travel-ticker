@@ -64,6 +64,7 @@
 			case 'sent': return 'status-sent';
 			case 'failed': return 'status-failed';
 			case 'cancelled': return 'status-cancelled';
+			case 'skipped': return 'status-skipped';
 			default: return 'status-pending';
 		}
 	}
@@ -73,6 +74,7 @@
 			case 'sent': return '✅';
 			case 'failed': return '❌';
 			case 'cancelled': return '🚫';
+			case 'skipped': return '⏭️';
 			default: return '🕐';
 		}
 	}
@@ -113,6 +115,10 @@
 		<div class="stat-card failed">
 			<span class="stat-value">{data.stats.failed}</span>
 			<span class="stat-label">Failed</span>
+		</div>
+		<div class="stat-card skipped">
+			<span class="stat-value">{data.stats.skipped}</span>
+			<span class="stat-label">Skipped</span>
 		</div>
 	</div>
 
@@ -155,6 +161,12 @@
 			<input type="hidden" name="status" value="failed" />
 			<button type="submit" class="btn-secondary" disabled={data.stats.failed === 0}>
 				🗑️ Clear Failed ({data.stats.failed})
+			</button>
+		</form>
+		<form method="POST" action="?/deleteAll" use:enhance>
+			<input type="hidden" name="status" value="skipped" />
+			<button type="submit" class="btn-secondary" disabled={data.stats.skipped === 0}>
+				🗑️ Clear Skipped ({data.stats.skipped})
 			</button>
 		</form>
 		<form method="POST" action="?/deleteAll" use:enhance onsubmit={(e) => { if (!confirm('Delete ALL notifications? This cannot be undone.')) e.preventDefault(); }}>
@@ -356,6 +368,7 @@
 	.stat-card.sent { border-left: 3px solid #10b981; }
 	.stat-card.cancelled { border-left: 3px solid #6b7280; }
 	.stat-card.failed { border-left: 3px solid #ef4444; }
+	.stat-card.skipped { border-left: 3px solid #8b5cf6; }
 
 	.stat-value {
 		display: block;
@@ -554,6 +567,11 @@
 	.status-badge.failed {
 		background: rgba(239, 68, 68, 0.1);
 		color: #ef4444;
+	}
+
+	.status-badge.skipped {
+		background: rgba(139, 92, 246, 0.1);
+		color: #8b5cf6;
 	}
 
 	.type-cell {
