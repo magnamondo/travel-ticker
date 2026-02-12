@@ -27,6 +27,7 @@
 			<a href="/admin/groups" onclick={() => (menuOpen = false)}>Groups</a>
 			<a href="/admin/comments" onclick={() => (menuOpen = false)}>Comments</a>
 			<a href="/admin/jobs" onclick={() => (menuOpen = false)}>Video Jobs</a>
+			<a href="/admin/notifications" onclick={() => (menuOpen = false)}>Notifications</a>
 		</nav>
 		<div class="admin-back">
 			<a href="/">← Back to site</a>
@@ -92,6 +93,10 @@
 		display: flex;
 		flex-direction: column;
 		padding: 1.5rem;
+		position: sticky;
+		top: 0;
+		height: 100vh;
+		overflow-y: auto;
 	}
 
 	.admin-logo h2 {

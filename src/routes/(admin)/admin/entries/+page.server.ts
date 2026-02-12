@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto';
 import { readdir, unlink, rm } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { queueNotification, cancelNotification } from '$lib/server/notifications';
+import { queueNotification } from '$lib/server/notifications';
 
 const DATA_DIR = process.env.DATA_DIR || 'data';
 const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
@@ -167,6 +167,25 @@ export const actions: Actions = {
 			}
 		}
 
+		// Queue notification for new published milestone
+		const [segmentData] = await db
+			.select({ name: segment.name })
+			.from(segment)
+			.where(eq(segment.id, segmentId));
+
+		console.log('📧 Queueing notification for milestone:', milestoneId, title);
+		
+		queueNotification(
+			'new_milestones',
+			`milestone:${milestoneId}`,
+			{
+				milestoneId,
+				milestoneTitle: title,
+				segmentName: segmentData?.name ?? 'Updates'
+			}
+		).then(() => console.log('✅ Notification queued successfully'))
+		.catch(err => console.error('❌ Failed to queue milestone notification:', err));
+
 		return { success: true, message: 'Entry added!' };
 	},
 
@@ -184,6 +203,14 @@ export const actions: Actions = {
 		if (!milestoneId || !segmentId || !title || !dateStr) {
 			return fail(400, { error: 'All fields are required' });
 		}
+
+		// Check if milestone is being published for the first time
+		const [existingMilestone] = await db
+			.select({ published: milestone.published })
+			.from(milestone)
+			.where(eq(milestone.id, milestoneId));
+
+		const isFirstPublish = published && existingMilestone && !existingMilestone.published;
 
 		// Parse meta JSON
 		let meta: { type: 'coordinates' | 'link' | 'icon'; value: string; label?: string; icon?: string }[] = [];
@@ -229,6 +256,22 @@ export const actions: Actions = {
 				groupId
 			});
 		}
+
+		// Queue notification if this is the first time publishing
+		if (isFirstPublish) {
+			console.log('📧 Queueing/extending new_milestones notification for:', milestoneId);
+			
+			// Use shared groupKey - debounces multiple publishes into one notification
+			queueNotification(
+				'new_milestones',
+				'new_milestones', // Shared key for all new milestone batches
+				{ triggered: new Date().toISOString() } // Worker will query fresh data
+			).then(() => console.log('✅ Notification queued/extended successfully'))
+			.catch(err => console.error('❌ Failed to queue milestone notification:', err));
+		}
+
+		// Note: Individual unpublish doesn't cancel the batch notification
+		// The worker will query fresh data and only include published milestones
 
 		return { success: true, message: 'Entry updated!' };
 	},
@@ -295,6 +338,8 @@ export const actions: Actions = {
 
 		// Delete upload sessions (should cascade, but be explicit)
 		await db.delete(uploadSession).where(eq(uploadSession.milestoneId, milestoneId));
+
+		// Note: No need to cancel notification - worker queries fresh data
 
 		// Delete milestone (cascades to media records)
 		await db.delete(milestone).where(eq(milestone.id, milestoneId));
@@ -541,9 +586,7 @@ export const actions: Actions = {
 			.set({ published: false })
 			.where(eq(milestone.id, milestoneId));
 
-		// Cancel any pending notification for this milestone
-		cancelNotification(`milestone:${milestoneId}`)
-			.catch(err => console.error('Failed to cancel milestone notification:', err));
+		// Note: No need to cancel notification - worker queries fresh data
 
 		return { success: true, message: 'Entry unpublished!' };
 	},

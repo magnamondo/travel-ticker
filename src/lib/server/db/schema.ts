@@ -37,7 +37,7 @@ export const userProfile = sqliteTable('user_profile', {
 // Notification queue - delayed sending with cancellation & batching support
 export const notificationQueue = sqliteTable('notification_queue', {
 	id: text('id').primaryKey(),
-	// Notification type (e.g., 'new_milestones', 'comment_replies')
+	// Notification type (e.g., 'new_milestones')
 	typeId: text('type_id').notNull(),
 	// Grouping key - notifications with same key can be batched or deduplicated
 	// e.g., "milestone:123" or "comment:456:reactions"
@@ -47,6 +47,8 @@ export const notificationQueue = sqliteTable('notification_queue', {
 	status: text('status', { enum: ['pending', 'cancelled', 'sent', 'failed'] }).notNull().default('pending'),
 	// Don't send before this time (allows cancellation window)
 	sendAfter: integer('send_after', { mode: 'timestamp' }).notNull(),
+	// How many times this notification has been extended (for exponential backoff)
+	extensionCount: integer('extension_count').notNull().default(0),
 	createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 	sentAt: integer('sent_at', { mode: 'timestamp' }),
 	error: text('error')
@@ -88,6 +90,7 @@ export const milestone = sqliteTable('milestone', {
 	avatar: text('avatar'),
 	meta: text('meta', { mode: 'json' }).$type<{ type: 'coordinates' | 'link' | 'icon'; value: string; label?: string; icon?: string }[]>().default([]),
 	published: integer('published', { mode: 'boolean' }).default(false).notNull(),
+	notifiedAt: integer('notified_at', { mode: 'timestamp' }), // When subscribers were notified
 	sortOrder: integer('sort_order').notNull().default(0),
 	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
 });
