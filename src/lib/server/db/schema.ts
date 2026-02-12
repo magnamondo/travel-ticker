@@ -1,4 +1,5 @@
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { NotificationPreferences } from '$lib/notification-types';
 
 export const user = sqliteTable('user', { 
 	id: text('id').primaryKey(), 
@@ -27,7 +28,28 @@ export const userProfile = sqliteTable('user_profile', {
 	firstName: text('first_name'),
 	lastName: text('last_name'),
 	dateOfBirth: integer('date_of_birth', { mode: 'timestamp' }),
-	phoneNumber: text('phone_number')
+	phoneNumber: text('phone_number'),
+	notificationPreferences: text('notification_preferences', { mode: 'json' })
+		.$type<NotificationPreferences>()
+		.default({ new_milestones: true })
+});
+
+// Notification queue - delayed sending with cancellation & batching support
+export const notificationQueue = sqliteTable('notification_queue', {
+	id: text('id').primaryKey(),
+	// Notification type (e.g., 'new_milestones', 'comment_replies')
+	typeId: text('type_id').notNull(),
+	// Grouping key - notifications with same key can be batched or deduplicated
+	// e.g., "milestone:123" or "comment:456:reactions"
+	groupKey: text('group_key').notNull(),
+	// JSON payload for the email template
+	payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+	status: text('status', { enum: ['pending', 'cancelled', 'sent', 'failed'] }).notNull().default('pending'),
+	// Don't send before this time (allows cancellation window)
+	sendAfter: integer('send_after', { mode: 'timestamp' }).notNull(),
+	createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+	sentAt: integer('sent_at', { mode: 'timestamp' }),
+	error: text('error')
 });
 
 // Groups for content access control
@@ -168,3 +190,4 @@ export type UploadSession = typeof uploadSession.$inferSelect;
 export type Comment = typeof comment.$inferSelect;
 export type Reaction = typeof reaction.$inferSelect;
 export type VideoJob = typeof videoJob.$inferSelect;
+export type NotificationQueue = typeof notificationQueue.$inferSelect;

@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { readdir, unlink, rm } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { queueNotification, cancelNotification } from '$lib/server/notifications';
 
 const DATA_DIR = process.env.DATA_DIR || 'data';
 const UPLOADS_DIR = join(process.cwd(), DATA_DIR, 'uploads');
@@ -481,10 +482,48 @@ export const actions: Actions = {
 			return fail(400, { error: 'Milestone ID is required' });
 		}
 
+		// Get milestone details before publishing
+		const [milestoneData] = await db
+			.select({
+				id: milestone.id,
+				title: milestone.title,
+				segmentId: milestone.segmentId,
+				published: milestone.published
+			})
+			.from(milestone)
+			.where(eq(milestone.id, milestoneId));
+
+		if (!milestoneData) {
+			return fail(404, { error: 'Milestone not found' });
+		}
+
+		// Only send notifications if this is the first time publishing
+		const wasUnpublished = !milestoneData.published;
+
 		await db
 			.update(milestone)
 			.set({ published: true })
 			.where(eq(milestone.id, milestoneId));
+
+		// Send notification to subscribers (only on first publish)
+		if (wasUnpublished) {
+			const [segmentData] = await db
+				.select({ name: segment.name })
+				.from(segment)
+				.where(eq(segment.id, milestoneData.segmentId));
+
+			// Queue notification with 5-minute delay
+			// This allows cancellation if the milestone is unpublished quickly
+			queueNotification(
+				'new_milestones',
+				`milestone:${milestoneData.id}`, // groupKey for cancellation
+				{
+					milestoneId: milestoneData.id,
+					milestoneTitle: milestoneData.title,
+					segmentName: segmentData?.name ?? 'Updates'
+				}
+			).catch(err => console.error('Failed to queue milestone notification:', err));
+		}
 
 		return { success: true, message: 'Entry published!' };
 	},
@@ -501,6 +540,10 @@ export const actions: Actions = {
 			.update(milestone)
 			.set({ published: false })
 			.where(eq(milestone.id, milestoneId));
+
+		// Cancel any pending notification for this milestone
+		cancelNotification(`milestone:${milestoneId}`)
+			.catch(err => console.error('Failed to cancel milestone notification:', err));
 
 		return { success: true, message: 'Entry unpublished!' };
 	},

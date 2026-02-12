@@ -158,6 +158,44 @@
 		{/if}
 	</form>
 
+	<form method="post" action="?/updateNotifications" use:enhance class="profile-form">
+		<div class="profile-section">
+			<div class="section-header">
+				<h2>Notification Preferences</h2>
+			</div>
+
+			{#if data.notificationTypes.length > 0}
+				<div class="form-stack">
+					{#each data.notificationTypes as notificationType}
+						<label class="checkbox-field">
+							<input
+								type="checkbox"
+								name="notify_{notificationType.id}"
+								checked={data.notificationPreferences[notificationType.id] === true}
+							/>
+							<span class="checkbox-label">{notificationType.label}</span>
+							{#if notificationType.description}
+								<span class="checkbox-description">{notificationType.description}</span>
+							{/if}
+						</label>
+					{/each}
+				</div>
+			{:else}
+				<p class="no-notifications">No notification options available.</p>
+			{/if}
+		</div>
+
+		{#if data.notificationTypes.length > 0}
+			<div class="form-actions">
+				<button type="submit" class="btn btn-primary">Save Preferences</button>
+			</div>
+		{/if}
+
+		{#if form?.notificationsSuccess}
+			<p class="success-message">Notification preferences updated!</p>
+		{/if}
+	</form>
+
 	<div class="profile-section danger-zone">
 		<div class="section-header">
 			<h2>Session</h2>
@@ -340,6 +378,42 @@
 
 	.danger-zone {
 		border-color: var(--color-border);
+	}
+
+	.checkbox-field {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		grid-template-rows: auto auto;
+		gap: 0.25rem 0.75rem;
+		align-items: start;
+		cursor: pointer;
+	}
+
+	.checkbox-field input[type="checkbox"] {
+		grid-row: 1 / 3;
+		width: 1.25rem;
+		height: 1.25rem;
+		margin-top: 0.125rem;
+		accent-color: var(--color-primary);
+		cursor: pointer;
+	}
+
+	.checkbox-label {
+		font-size: 0.9375rem;
+		font-weight: 500;
+		color: var(--color-text);
+	}
+
+	.checkbox-description {
+		font-size: 0.8125rem;
+		color: var(--color-text-muted);
+		line-height: 1.4;
+	}
+
+	.no-notifications {
+		font-size: 0.875rem;
+		color: var(--color-text-muted);
+		font-style: italic;
 	}
 
 	@media (max-width: 600px) {

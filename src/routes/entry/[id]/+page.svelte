@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Reactions from '$lib/components/Reactions.svelte';
 	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { getMapsUrl } from '$lib/maps';
 	import { toasts } from '$lib/stores/toast.svelte';
 
@@ -29,6 +31,10 @@
 	
 	// Track deleted comments locally (to hide them immediately)
 	let deletedCommentIds = $state<Set<string>>(new Set());
+
+	// Delete confirmation dialog state
+	let deleteDialogOpen = $state(false);
+	let pendingDeleteCommentId = $state<string | null>(null);
 
 	const EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -71,8 +77,7 @@
 				toasts.success('Comment updated');
 				editingCommentId = null;
 				editContent = '';
-				// Refresh the page to get updated data
-				window.location.reload();
+				await invalidateAll(); // refresh data from server
 			} else {
 				const err = await res.json();
 				toasts.error(err.message || 'Failed to update comment');
@@ -84,8 +89,22 @@
 		}
 	}
 
-	async function deleteComment(commentId: string) {
-		if (!confirm('Are you sure you want to delete this comment?')) return;
+	function requestDeleteComment(commentId: string) {
+		pendingDeleteCommentId = commentId;
+		deleteDialogOpen = true;
+	}
+
+	function cancelDelete() {
+		deleteDialogOpen = false;
+		pendingDeleteCommentId = null;
+	}
+
+	async function confirmDelete() {
+		if (!pendingDeleteCommentId) return;
+		deleteDialogOpen = false;
+		const commentId = pendingDeleteCommentId;
+		pendingDeleteCommentId = null;
+		
 		deleteSubmitting = commentId;
 		try {
 			const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
@@ -93,6 +112,7 @@
 				toasts.success('Comment deleted');
 				deletedCommentIds.add(commentId);
 				deletedCommentIds = deletedCommentIds; // trigger reactivity
+				await invalidateAll(); // refresh data from server
 			} else {
 				const err = await res.json();
 				toasts.error(err.message || 'Failed to delete comment');
@@ -114,7 +134,7 @@
 			});
 			if (res.ok) {
 				toasts.success(currentlyHidden ? 'Comment unhidden' : 'Comment hidden');
-				window.location.reload();
+				await invalidateAll(); // refresh data from server
 			} else {
 				const err = await res.json();
 				toasts.error(err.message || 'Failed to update comment');
@@ -470,7 +490,7 @@
 									<button 
 										type="button" 
 										class="action-btn delete-btn" 
-										onclick={() => deleteComment(comment.id)}
+										onclick={() => requestDeleteComment(comment.id)}
 										disabled={deleteSubmitting === comment.id}
 										title="Delete comment"
 									>
@@ -560,6 +580,17 @@
 		onclose={closeLightbox}
 	/>
 {/if}
+
+<ConfirmDialog
+	open={deleteDialogOpen}
+	title="Delete Comment"
+	message="Are you sure you want to delete this comment? This action cannot be undone."
+	confirmText="Delete"
+	cancelText="Cancel"
+	variant="danger"
+	onconfirm={confirmDelete}
+	oncancel={cancelDelete}
+/>
 
 <style>
 	.entry-page {

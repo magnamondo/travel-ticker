@@ -88,9 +88,10 @@ WORKDIR /app
 RUN apk add --no-cache ffmpeg imagemagick libheif
 
 # Copy only what's needed:
-# - Pre-compiled worker from builder
+# - Pre-compiled workers from builder
 # - Package files for native deps (better-sqlite3)
 COPY --from=builder /app/build/worker.mjs build/
+COPY --from=builder /app/build/notification-worker.mjs build/
 COPY --from=builder /app/package*.json ./
 
 # Install only production dependencies (no tsx/esbuild needed)
