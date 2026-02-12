@@ -32,6 +32,7 @@
 		<h2>Quick Actions</h2>
 		<div class="actions">
 			<a href="/admin/entries" class="action-btn">Manage Entries</a>
+			<a href="/admin/media" class="action-btn">Manage Media</a>
 			<a href="/admin/users" class="action-btn">Manage Users</a>
 			<a href="/admin/comments" class="action-btn">Moderate Comments</a>
 		</div>

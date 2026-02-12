@@ -23,6 +23,7 @@
 		<nav class="admin-nav">
 			<a href="/admin" onclick={() => (menuOpen = false)}>Dashboard</a>
 			<a href="/admin/entries" onclick={() => (menuOpen = false)}>Entries</a>
+			<a href="/admin/media" onclick={() => (menuOpen = false)}>Media</a>
 			<a href="/admin/users" onclick={() => (menuOpen = false)}>Users</a>
 			<a href="/admin/groups" onclick={() => (menuOpen = false)}>Groups</a>
 			<a href="/admin/comments" onclick={() => (menuOpen = false)}>Comments</a>
