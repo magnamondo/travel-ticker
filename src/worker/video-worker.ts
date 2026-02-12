@@ -210,6 +210,96 @@ function needsTranscoding(mimeType: string, filename: string): boolean {
 }
 
 /**
+ * Check if an MP4 file has faststart (moov atom before mdat)
+ * Reads first 64 bytes and checks atom order
+ */
+async function hasFaststart(filePath: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		// Use ffprobe to check if moov is at start
+		const proc = spawn('ffprobe', [
+			'-v', 'error',
+			'-show_entries', 'format_tags=',
+			'-of', 'default=noprint_wrappers=1',
+			filePath
+		]);
+
+		// As a simpler fallback: read first 4KB and look for 'moov' before 'mdat'
+		proc.on('close', async () => {
+			try {
+				const { createReadStream } = await import('fs');
+				const chunks: Buffer[] = [];
+				const stream = createReadStream(filePath, { start: 0, end: 4095 });
+				
+				for await (const chunk of stream) {
+					chunks.push(chunk as Buffer);
+				}
+				
+				const buffer = Buffer.concat(chunks);
+				const data = buffer.toString('binary');
+				const moovIndex = data.indexOf('moov');
+				const mdatIndex = data.indexOf('mdat');
+				
+				// faststart = moov comes before mdat (or mdat not in first 4KB)
+				if (moovIndex >= 0 && (mdatIndex < 0 || moovIndex < mdatIndex)) {
+					resolve(true);
+				} else if (mdatIndex >= 0 && moovIndex < 0) {
+					// mdat found but no moov in first 4KB = not faststart
+					resolve(false);
+				} else {
+					// Neither found in first 4KB, assume needs processing
+					resolve(false);
+				}
+			} catch {
+				// On error, assume needs faststart
+				resolve(false);
+			}
+		});
+	});
+}
+
+/**
+ * Remux MP4 with faststart (moov at beginning) without re-encoding
+ * This is fast since it only moves metadata around
+ */
+async function ensureFaststart(inputPath: string): Promise<{ success: boolean; outputPath: string }> {
+	const dir = dirname(inputPath);
+	const ext = extname(inputPath);
+	const name = basename(inputPath, ext);
+	const tempPath = join(dir, `${name}_faststart${ext}`);
+
+	const success = await new Promise<boolean>((resolve) => {
+		const proc = spawn('ffmpeg', [
+			'-i', inputPath,
+			'-c', 'copy',           // No re-encoding, just remux
+			'-movflags', '+faststart',
+			'-y',
+			tempPath
+		]);
+
+		proc.on('error', () => resolve(false));
+		proc.on('close', (code) => resolve(code === 0));
+	});
+
+	if (success) {
+		// Delete original and rename
+		await unlink(inputPath);
+		await rename(tempPath, inputPath);
+		return { success: true, outputPath: inputPath };
+	}
+
+	// Cleanup temp file on failure
+	try {
+		if (existsSync(tempPath)) {
+			await unlink(tempPath);
+		}
+	} catch {
+		// Ignore cleanup errors
+	}
+
+	return { success: false, outputPath: inputPath };
+}
+
+/**
  * Convert a JPEG to progressive encoding using ImageMagick
  * Modifies file in-place
  */
@@ -422,6 +512,24 @@ async function processJob(job: typeof videoJob.$inferSelect): Promise<void> {
 			finalPath = resizeResult.outputPath;
 			resultUrl = `/api/uploads/${basename(finalPath)}`;
 			console.log(`  ✅ Resize complete`);
+		} else {
+			// Video is web-compatible and doesn't need resizing
+			// But we still need to ensure faststart for streaming
+			const ext = extname(job.filename).toLowerCase();
+			if (ext === '.mp4' || job.mimeType === 'video/mp4') {
+				const hasFS = await hasFaststart(job.inputPath);
+				if (!hasFS) {
+					console.log(`  ⚡ Applying faststart for streaming optimization...`);
+					const fsResult = await ensureFaststart(job.inputPath);
+					if (!fsResult.success) {
+						console.warn(`  ⚠️ Faststart failed, video may buffer on playback`);
+					} else {
+						console.log(`  ✅ Faststart applied`);
+					}
+				} else {
+					console.log(`  ✅ Video already has faststart`);
+				}
+			}
 		}
 
 		// STEP 3: Mark job as completed
