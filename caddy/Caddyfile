@@ -1,36 +1,22 @@
 # Caddyfile with rate limiting for Travel Ticker
 # Uses caddy-ratelimit plugin: https://github.com/mholt/caddy-ratelimit
-
 {
-	# Global options
 	admin off
-
-	# Global log level (reduces startup/module noise)
 	log {
 		level WARN
 	}
-
-	# Rate limit configuration
 	order rate_limit before basicauth
 }
 
 {$CADDY_DOMAIN:localhost} {
-	# Enable compression
 	encode gzip zstd
 
-	# Rate limiting configuration
-	# All zones are evaluated - requests must pass all matching zones
 	rate_limit {
-		# Global rate limit: 100 requests per second per IP
-		# Protects against general flooding/DDoS
 		zone global {
 			key {remote_host}
 			events 100
 			window 1s
 		}
-
-		# Stricter limits for authentication endpoints
-		# 10 requests per minute per IP (prevents brute force)
 		zone auth {
 			match {
 				path /login /register /forgot-password /reset-password /verify-email
@@ -39,9 +25,6 @@
 			events 10
 			window 1m
 		}
-
-		# Upload endpoints: key by session cookie (each authenticated user = own bucket)
-		# Anonymous requests are rejected by backend, so no rate limit key needed for them
 		zone upload {
 			match {
 				path /api/upload /api/upload/*
@@ -50,8 +33,6 @@
 			events 1200
 			window 1m
 		}
-
-		# Client error reporting: 10 per minute per IP (prevent abuse)
 		zone client_error {
 			match {
 				path /api/client-error
@@ -62,19 +43,18 @@
 		}
 	}
 
-	# Reject protected endpoints without auth cookie (defense-in-depth)
-	# Backend still validates the session, but this saves resources on obvious rejects
+	# Block Next.js exploit attempts (CVE-2025-29927)
+	@nextjs_exploit header X-Middleware-Subrequest *
+	respond @nextjs_exploit 403
+
+	# Reject protected endpoints without auth cookie
 	@no_auth_cookie {
 		path /api/upload/* /admin/*
 		not header Cookie *auth-session*
 	}
 	respond @no_auth_cookie 401
 
-	# Reverse proxy to the application
 	reverse_proxy travel-ticker:3000 {
-		# X-Sendfile implementation:
-		# If backend sends "X-Accel-Redirect", serve the file directly from Caddy
-		# keeping the backend efficient/stateless for large downloads.
 		@accel header X-Accel-Redirect *
 		handle_response @accel {
 			root * /internal-data/uploads
@@ -85,17 +65,14 @@
 		}
 	}
 
-	# Security headers
 	header {
 		-Server
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# HSTS: Enforce HTTPS for 1 year, include subdomains, allow preload list
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 	}
 
-	# Logging
 	log {
 		output stdout
 		format json
