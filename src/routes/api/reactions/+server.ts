@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { reaction, comment } from '$lib/server/db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
-import { canReact } from '$lib/roles';
+import { canReact, isAdmin } from '$lib/roles';
 import { isValidEmoji } from '$lib/emojis';
 
 function generateId(): string {
@@ -108,4 +108,35 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const grouped = await getGroupedReactions(targetType, targetId);
 
 	return json({ reactions: grouped });
+};
+
+// Admin-only: Delete any reaction by ID
+export const DELETE: RequestHandler = async ({ url, locals }) => {
+	if (!locals.user) {
+		throw error(401, 'Must be logged in');
+	}
+
+	if (!isAdmin(locals.user.roles)) {
+		throw error(403, 'Admin access required');
+	}
+
+	const reactionId = url.searchParams.get('id');
+	if (!reactionId) {
+		throw error(400, 'Missing reaction id');
+	}
+
+	// Verify reaction exists
+	const existing = await db
+		.select({ id: reaction.id })
+		.from(reaction)
+		.where(eq(reaction.id, reactionId))
+		.limit(1);
+
+	if (existing.length === 0) {
+		throw error(404, 'Reaction not found');
+	}
+
+	await db.delete(reaction).where(eq(reaction.id, reactionId));
+
+	return json({ success: true });
 };
