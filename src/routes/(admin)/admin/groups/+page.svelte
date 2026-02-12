@@ -2,11 +2,18 @@
 	import { enhance } from '$app/forms';
 	import { untrack } from 'svelte';
 	import { toasts } from '$lib/stores/toast.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
 
 	// Track last shown toast to avoid duplicates
 	let lastToastMessage = $state<string | null>(null);
+
+	// ConfirmDialog state
+	let deleteGroupDialogOpen = $state(false);
+
+	// Form element binding
+	let deleteGroupForm = $state<HTMLFormElement>();
 
 	$effect(() => {
 		const message = form?.success ? form?.message : form?.error;
@@ -80,6 +87,16 @@
 	function getUsersNotInGroup(members: typeof groupMembers) {
 		const memberIds = new Set(members.map(m => m.id));
 		return data.users.filter(u => !memberIds.has(u.id));
+	}
+
+	// ConfirmDialog handlers
+	function confirmDeleteGroup() {
+		deleteGroupDialogOpen = false;
+		deleteGroupForm?.requestSubmit();
+	}
+
+	function cancelDeleteGroup() {
+		deleteGroupDialogOpen = false;
 	}
 </script>
 
@@ -271,16 +288,14 @@
 					<button type="submit" class="btn btn-primary">Save Changes</button>
 				</div>
 			</form>
-			<form method="POST" action="?/deleteGroup" use:enhance={() => {
+			<form bind:this={deleteGroupForm} method="POST" action="?/deleteGroup" use:enhance={() => {
 				return async ({ result, update }) => {
 					await update();
 					if (result.type === 'success') editingGroup = null;
 				};
 			}} class="delete-form">
 				<input type="hidden" name="groupId" value={editingGroup.id} />
-				<button type="submit" class="btn btn-danger" onclick={(e) => {
-					if (!confirm('Delete this group? Content access will be removed.')) e.preventDefault();
-				}}>Delete Group</button>
+				<button type="button" class="btn btn-danger" onclick={() => (deleteGroupDialogOpen = true)}>Delete Group</button>
 			</form>
 		</div>
 	</div>
@@ -343,6 +358,16 @@
 		</div>
 	</div>
 {/if}
+
+<ConfirmDialog
+	open={deleteGroupDialogOpen}
+	title="Delete Group"
+	message="Delete this group? Content access will be removed."
+	confirmText="Delete"
+	variant="danger"
+	onconfirm={confirmDeleteGroup}
+	oncancel={cancelDeleteGroup}
+/>
 
 <style>
 	.groups-page {

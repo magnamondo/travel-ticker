@@ -21,11 +21,25 @@
 		oncancel
 	}: Props = $props();
 
+	let dialogElement: HTMLDivElement | undefined = $state();
+	let cancelButton: HTMLButtonElement | undefined = $state();
+	let confirmButton: HTMLButtonElement | undefined = $state();
+	let previouslyFocusedElement: HTMLElement | null = null;
+
 	$effect(() => {
 		if (open) {
 			document.body.style.overflow = 'hidden';
+			// Store the currently focused element to restore later
+			previouslyFocusedElement = document.activeElement as HTMLElement;
+			// Focus the confirm button when dialog opens
+			setTimeout(() => {
+				confirmButton?.focus();
+			}, 0);
 		} else {
 			document.body.style.overflow = '';
+			// Restore focus to previously focused element
+			previouslyFocusedElement?.focus();
+			previouslyFocusedElement = null;
 		}
 		return () => {
 			document.body.style.overflow = '';
@@ -34,8 +48,41 @@
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (!open) return;
+
 		if (e.key === 'Escape') {
+			e.preventDefault();
 			oncancel();
+			return;
+		}
+
+		if (e.key === 'Enter') {
+			// Enter confirms when not focused on cancel button
+			if (document.activeElement !== cancelButton) {
+				e.preventDefault();
+				onconfirm();
+			}
+			return;
+		}
+
+		// Focus trapping with Tab
+		if (e.key === 'Tab') {
+			const focusableElements = [cancelButton, confirmButton].filter(Boolean) as HTMLElement[];
+			const firstElement = focusableElements[0];
+			const lastElement = focusableElements[focusableElements.length - 1];
+
+			if (e.shiftKey) {
+				// Shift+Tab: if on first element, go to last
+				if (document.activeElement === firstElement) {
+					e.preventDefault();
+					lastElement?.focus();
+				}
+			} else {
+				// Tab: if on last element, go to first
+				if (document.activeElement === lastElement) {
+					e.preventDefault();
+					firstElement?.focus();
+				}
+			}
 		}
 	}
 
@@ -50,6 +97,7 @@
 
 {#if open}
 	<div
+		bind:this={dialogElement}
 		class="dialog-overlay"
 		role="dialog"
 		aria-modal="true"
@@ -63,10 +111,11 @@
 			<h2 id="dialog-title" class="dialog-title">{title}</h2>
 			<p id="dialog-message" class="dialog-message">{message}</p>
 			<div class="dialog-actions">
-				<button type="button" class="btn btn-secondary" onclick={oncancel}>
+				<button bind:this={cancelButton} type="button" class="btn btn-secondary" onclick={oncancel}>
 					{cancelText}
 				</button>
 				<button
+					bind:this={confirmButton}
 					type="button"
 					class="btn btn-primary"
 					class:btn-danger={variant === 'danger'}

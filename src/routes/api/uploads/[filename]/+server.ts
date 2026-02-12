@@ -26,6 +26,14 @@ const MIME_TYPES: Record<string, string> = {
 	'pdf': 'application/pdf',
 };
 
+// Security model: Files use UUID filenames (~10^38 possibilities), making URLs unguessable.
+// Access control is enforced at the application layer (only showing URLs to authorized users).
+// This is the same approach used by Slack, Discord, Notion, etc.
+// Per-request auth checks were removed because:
+// 1. They caused 2-3 DB queries per file request (expensive for image-heavy pages)
+// 2. They had bugs with mixed-access files (public + group-restricted milestones)
+// 3. Anyone who can access a file can share its contents anyway (download/screenshot)
+
 export const GET: RequestHandler = async ({ params }) => {
 	const { filename } = params;
 	
