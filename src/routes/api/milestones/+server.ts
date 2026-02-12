@@ -172,14 +172,14 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		return acc;
 	}, {} as Record<string, typeof allReactions>);
 
-	// Fetch comment counts for all milestones
+	// Fetch comment counts for all milestones (excluding hidden comments)
 	const commentCounts = await db
 		.select({
 			milestoneId: comment.milestoneId,
 			count: count()
 		})
 		.from(comment)
-		.where(sql`${comment.milestoneId} IN ${milestoneIds}`)
+		.where(and(sql`${comment.milestoneId} IN ${milestoneIds}`, eq(comment.isHidden, false)))
 		.groupBy(comment.milestoneId);
 
 	const commentCountByMilestone = commentCounts.reduce((acc, c) => {
