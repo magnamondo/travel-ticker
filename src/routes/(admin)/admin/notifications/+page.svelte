@@ -16,6 +16,10 @@
 	let deleteNotificationDialogOpen = $state(false);
 	let pendingDeleteNotificationId = $state<string | null>(null);
 
+	// Form element bindings
+	let deleteAllForm = $state<HTMLFormElement>();
+	let deleteNotificationForms = $state<Record<string, HTMLFormElement>>({});
+
 	function toggleMenu(notificationId: string, event: MouseEvent) {
 		event.stopPropagation();
 		if (openMenuId === notificationId) {
@@ -40,8 +44,7 @@
 	// ConfirmDialog handlers
 	function confirmDeleteAllNotifications() {
 		deleteAllDialogOpen = false;
-		const form = document.getElementById('delete-all-notifications-form') as HTMLFormElement;
-		form?.requestSubmit();
+		deleteAllForm?.requestSubmit();
 	}
 
 	function cancelDeleteAll() {
@@ -55,10 +58,9 @@
 
 	function confirmDeleteNotification() {
 		if (!pendingDeleteNotificationId) return;
-		const form = document.getElementById(`delete-notification-${pendingDeleteNotificationId}`) as HTMLFormElement;
+		const form = deleteNotificationForms[pendingDeleteNotificationId];
 		deleteNotificationDialogOpen = false;
 		closeMenu();
-		const notificationId = pendingDeleteNotificationId;
 		pendingDeleteNotificationId = null;
 		form?.requestSubmit();
 	}
@@ -206,7 +208,7 @@
 				🗑️ Clear Skipped ({data.stats.skipped})
 			</button>
 		</form>
-		<form id="delete-all-notifications-form" method="POST" action="?/deleteAll" use:enhance>
+		<form bind:this={deleteAllForm} method="POST" action="?/deleteAll" use:enhance>
 			<input type="hidden" name="status" value="all" />
 			<button type="button" class="btn-danger" disabled={data.stats.total === 0} onclick={() => (deleteAllDialogOpen = true)}>
 				🗑️ Clear All
@@ -300,7 +302,7 @@
 													</form>
 												{/if}
 												<div class="dropdown-divider"></div>
-												<form id="delete-notification-{notification.id}" method="POST" action="?/delete" use:enhance={() => {
+												<form bind:this={deleteNotificationForms[notification.id]} method="POST" action="?/delete" use:enhance={() => {
 													return async ({ update }) => {
 														closeMenu();
 														await update();

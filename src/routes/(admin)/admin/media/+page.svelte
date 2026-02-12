@@ -18,6 +18,10 @@
 	let deleteMediaDialogOpen = $state(false);
 	let pendingDeleteMediaId = $state<string | null>(null);
 
+	// Form element bindings
+	let deleteOrphanForms = $state<Record<string, HTMLFormElement>>({});
+	let deleteMediaForms = $state<Record<string, HTMLFormElement>>({});
+
 	$effect(() => {
 		const message = form?.success ? form?.message : form?.error;
 		const lastShown = untrack(() => lastToastMessage);
@@ -29,6 +33,10 @@
 			} else {
 				toasts.error(message);
 			}
+			// Reset after a tick so the same message can trigger again on next submission
+			setTimeout(() => {
+				lastToastMessage = null;
+			}, 100);
 		}
 	});
 
@@ -49,7 +57,7 @@
 
 	function confirmDeleteOrphan() {
 		if (!pendingDeleteOrphan) return;
-		const form = document.getElementById(`delete-orphan-${pendingDeleteOrphan}`) as HTMLFormElement;
+		const form = deleteOrphanForms[pendingDeleteOrphan];
 		deleteOrphanDialogOpen = false;
 		pendingDeleteOrphan = null;
 		form?.requestSubmit();
@@ -68,10 +76,9 @@
 
 	function confirmDeleteMedia() {
 		if (!pendingDeleteMediaId) return;
-		const form = document.getElementById(`delete-media-${pendingDeleteMediaId}`) as HTMLFormElement;
+		const form = deleteMediaForms[pendingDeleteMediaId];
 		deleteMediaDialogOpen = false;
 		closeMenu();
-		const mediaId = pendingDeleteMediaId;
 		pendingDeleteMediaId = null;
 		form?.requestSubmit();
 	}
@@ -248,7 +255,7 @@
 							<a href="/api/uploads/{orphan.filename}" target="_blank" class="btn-icon" title="View file">
 								<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/><path fill-rule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
 							</a>
-							<form id="delete-orphan-{orphan.filename}" method="POST" action="?/deleteOrphan" use:enhance>
+							<form bind:this={deleteOrphanForms[orphan.filename]} method="POST" action="?/deleteOrphan" use:enhance>
 								<input type="hidden" name="filename" value={orphan.filename} />
 								<button 
 									type="button" 
@@ -330,7 +337,7 @@
 											</a>
 										{/if}
 										<div class="dropdown-divider"></div>
-										<form id="delete-media-{media.id}" method="POST" action="?/deleteMedia" use:enhance={() => {
+										<form bind:this={deleteMediaForms[media.id]} method="POST" action="?/deleteMedia" use:enhance={() => {
 											return async ({ update }) => {
 												closeMenu();
 												await update();

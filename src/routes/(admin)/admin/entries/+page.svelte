@@ -65,6 +65,12 @@
 	let pendingDeleteSegmentId = $state<string | null>(null);
 	let deleteEntryDialogOpen = $state(false);
 	let pendingDeleteEntryId = $state<string | null>(null);
+
+	// Form element bindings
+	let deleteSegmentForms = $state<Record<string, HTMLFormElement>>({});
+	let deleteEntryForms = $state<Record<string, HTMLFormElement>>({});
+	let editForms = $state<Record<string, HTMLFormElement>>({});
+
 	let touchCloneInitialLeft = $state(0);
 	let touchCloneInitialTop = $state(0);
 	let touchCurrentMilestoneMedia = $state<Array<{ id: string; sortOrder: number }>>([]);
@@ -218,9 +224,8 @@
 
 	function confirmDeleteSegment() {
 		if (!pendingDeleteSegmentId) return;
-		const form = document.getElementById(`delete-segment-${pendingDeleteSegmentId}`) as HTMLFormElement;
+		const form = deleteSegmentForms[pendingDeleteSegmentId];
 		deleteSegmentDialogOpen = false;
-		const segmentId = pendingDeleteSegmentId;
 		pendingDeleteSegmentId = null;
 		form?.requestSubmit();
 	}
@@ -237,9 +242,8 @@
 
 	function confirmDeleteEntry() {
 		if (!pendingDeleteEntryId) return;
-		const form = document.getElementById(`delete-entry-${pendingDeleteEntryId}`) as HTMLFormElement;
+		const form = deleteEntryForms[pendingDeleteEntryId];
 		deleteEntryDialogOpen = false;
-		const entryId = pendingDeleteEntryId;
 		pendingDeleteEntryId = null;
 		form?.requestSubmit();
 	}
@@ -744,7 +748,7 @@
 								<button type="submit" class="btn-icon-small add" title="New entry">+</button>
 							</form>
 							<button class="btn-icon-small" onclick={() => (editingSegmentId = group.segment.id)} title="Edit segment">✏️</button>
-							<form id="delete-segment-{group.segment.id}" method="POST" action="?/deleteSegment" use:enhance class="inline">
+							<form bind:this={deleteSegmentForms[group.segment.id]} method="POST" action="?/deleteSegment" use:enhance class="inline">
 								<input type="hidden" name="segmentId" value={group.segment.id} />
 								<button
 									type="button"
@@ -805,7 +809,7 @@
 								</div>
 								{#if editingMilestoneId === milestone.id}
 									<div class="milestone-edit-panel">
-								<form id="edit-form-{milestone.id}" method="POST" action="?/updateMilestone" use:enhance={() => {
+								<form bind:this={editForms[milestone.id]} method="POST" action="?/updateMilestone" use:enhance={() => {
 									return async ({ result, update }) => {
 										await update();
 										if (result.type === 'success') {
@@ -1035,7 +1039,7 @@
 								<div class="edit-panel-footer">
 									<label class="checkbox-label">
 										<input type="checkbox" checked={milestone.published} onchange={(e) => {
-											const form = document.getElementById(`edit-form-${milestone.id}`) as HTMLFormElement;
+											const form = editForms[milestone.id];
 											if (form) {
 												const input = form.querySelector('input[name="published"]') as HTMLInputElement;
 												if (input) input.value = e.currentTarget.checked ? 'on' : '';
@@ -1044,7 +1048,7 @@
 										<span>Published</span>
 									</label>
 									<div class="footer-buttons">
-										<form id="delete-entry-{milestone.id}" method="POST" action="?/deleteMilestone" use:enhance={() => {
+										<form bind:this={deleteEntryForms[milestone.id]} method="POST" action="?/deleteMilestone" use:enhance={() => {
 											return async ({ result }) => {
 												if (result.type === 'success') {
 													editingMilestoneId = null;

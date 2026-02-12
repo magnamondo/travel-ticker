@@ -16,6 +16,10 @@
 	let deleteUserDialogOpen = $state(false);
 	let pendingDeleteUser = $state<{ id: string; email: string } | null>(null);
 
+	// Form element bindings
+	let revokeSessionsForms = $state<Record<string, HTMLFormElement>>({});
+	let deleteUserForms = $state<Record<string, HTMLFormElement>>({});
+
 	// Show toast when form result changes
 	$effect(() => {
 		const message = form?.success ? form?.message : form?.error;
@@ -28,6 +32,10 @@
 			} else {
 				toasts.error(message);
 			}
+			// Reset after a tick so the same message can trigger again on next submission
+			setTimeout(() => {
+				lastToastMessage = null;
+			}, 100);
 		}
 	});
 
@@ -55,7 +63,7 @@
 
 	function confirmRevokeSessions() {
 		if (!pendingRevokeUser) return;
-		const form = document.getElementById(`revoke-sessions-${pendingRevokeUser.id}`) as HTMLFormElement;
+		const form = revokeSessionsForms[pendingRevokeUser.id];
 		revokeSessionsDialogOpen = false;
 		closeMenu();
 		pendingRevokeUser = null;
@@ -74,7 +82,7 @@
 
 	function confirmDeleteUser() {
 		if (!pendingDeleteUser) return;
-		const form = document.getElementById(`delete-user-${pendingDeleteUser.id}`) as HTMLFormElement;
+		const form = deleteUserForms[pendingDeleteUser.id];
 		deleteUserDialogOpen = false;
 		closeMenu();
 		pendingDeleteUser = null;
@@ -232,7 +240,7 @@
 													</button>
 												</form>
 											{/if}
-											<form id="revoke-sessions-{user.id}" method="POST" action="?/revokeAllSessions" use:enhance={() => {
+											<form bind:this={revokeSessionsForms[user.id]} method="POST" action="?/revokeAllSessions" use:enhance={() => {
 												return async ({ update }) => {
 													closeMenu();
 													await update();
@@ -249,7 +257,7 @@
 												</button>
 											</form>
 											<div class="dropdown-divider"></div>
-											<form id="delete-user-{user.id}" method="POST" action="?/delete" use:enhance={() => {
+											<form bind:this={deleteUserForms[user.id]} method="POST" action="?/delete" use:enhance={() => {
 												return async ({ update }) => {
 													closeMenu();
 													await update();

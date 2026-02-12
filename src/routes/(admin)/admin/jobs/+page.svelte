@@ -15,6 +15,10 @@
 	let deleteJobDialogOpen = $state(false);
 	let pendingDeleteJobId = $state<string | null>(null);
 
+	// Form element bindings
+	let deleteAllForm = $state<HTMLFormElement>();
+	let deleteJobForms = $state<Record<string, HTMLFormElement>>({});
+
 	function toggleMenu(jobId: string, event: MouseEvent) {
 		event.stopPropagation();
 		openMenuId = openMenuId === jobId ? null : jobId;
@@ -27,8 +31,7 @@
 	// ConfirmDialog handlers
 	function confirmDeleteAllJobs() {
 		deleteAllDialogOpen = false;
-		const form = document.getElementById('delete-all-jobs-form') as HTMLFormElement;
-		form?.requestSubmit();
+		deleteAllForm?.requestSubmit();
 	}
 
 	function cancelDeleteAll() {
@@ -42,10 +45,9 @@
 
 	function confirmDeleteJob() {
 		if (!pendingDeleteJobId) return;
-		const form = document.getElementById(`delete-job-${pendingDeleteJobId}`) as HTMLFormElement;
+		const form = deleteJobForms[pendingDeleteJobId];
 		deleteJobDialogOpen = false;
 		closeMenu();
-		const jobId = pendingDeleteJobId;
 		pendingDeleteJobId = null;
 		form?.requestSubmit();
 	}
@@ -157,7 +159,7 @@
 				🗑️ Clear Failed ({data.stats.failed})
 			</button>
 		</form>
-		<form id="delete-all-jobs-form" method="POST" action="?/deleteAll" use:enhance>
+		<form bind:this={deleteAllForm} method="POST" action="?/deleteAll" use:enhance>
 			<input type="hidden" name="status" value="all" />
 			<button type="button" class="btn-danger" disabled={data.stats.total === 0} onclick={() => (deleteAllDialogOpen = true)}>
 				🗑️ Clear All
@@ -256,7 +258,7 @@
 													</a>
 												{/if}
 												<div class="dropdown-divider"></div>
-												<form id="delete-job-{job.id}" method="POST" action="?/delete" use:enhance={() => {
+												<form bind:this={deleteJobForms[job.id]} method="POST" action="?/delete" use:enhance={() => {
 													return async ({ update }) => {
 														closeMenu();
 														await update();

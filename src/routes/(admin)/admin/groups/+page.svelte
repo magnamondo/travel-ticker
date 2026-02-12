@@ -12,6 +12,9 @@
 	// ConfirmDialog state
 	let deleteGroupDialogOpen = $state(false);
 
+	// Form element binding
+	let deleteGroupForm = $state<HTMLFormElement>();
+
 	$effect(() => {
 		const message = form?.success ? form?.message : form?.error;
 		const lastShown = untrack(() => lastToastMessage);
@@ -88,9 +91,8 @@
 
 	// ConfirmDialog handlers
 	function confirmDeleteGroup() {
-		const form = document.getElementById('delete-group-form') as HTMLFormElement;
 		deleteGroupDialogOpen = false;
-		form?.requestSubmit();
+		deleteGroupForm?.requestSubmit();
 	}
 
 	function cancelDeleteGroup() {
@@ -286,7 +288,7 @@
 					<button type="submit" class="btn btn-primary">Save Changes</button>
 				</div>
 			</form>
-			<form id="delete-group-form" method="POST" action="?/deleteGroup" use:enhance={() => {
+			<form bind:this={deleteGroupForm} method="POST" action="?/deleteGroup" use:enhance={() => {
 				return async ({ result, update }) => {
 					await update();
 					if (result.type === 'success') editingGroup = null;
