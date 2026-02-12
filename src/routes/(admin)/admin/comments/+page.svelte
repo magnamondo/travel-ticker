@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { toasts } from '$lib/stores/toast.svelte';
 	import { invalidateAll } from '$app/navigation';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data } = $props();
 
@@ -8,6 +9,10 @@
 	let deletingId = $state<string | null>(null);
 	let filterHidden = $state<'all' | 'visible' | 'hidden'>('all');
 	let searchQuery = $state('');
+
+	// ConfirmDialog state
+	let deleteDialogOpen = $state(false);
+	let pendingDeleteId = $state<string | null>(null);
 
 	const filteredComments = $derived.by(() => {
 		let comments = data.comments;
@@ -56,7 +61,6 @@
 	}
 
 	async function deleteComment(commentId: string) {
-		if (!confirm('Are you sure you want to permanently delete this comment? This cannot be undone.')) return;
 		deletingId = commentId;
 		try {
 			const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
@@ -72,6 +76,24 @@
 		} finally {
 			deletingId = null;
 		}
+	}
+
+	function requestDeleteComment(commentId: string) {
+		pendingDeleteId = commentId;
+		deleteDialogOpen = true;
+	}
+
+	function confirmDeleteComment() {
+		if (!pendingDeleteId) return;
+		deleteDialogOpen = false;
+		const commentId = pendingDeleteId;
+		pendingDeleteId = null;
+		deleteComment(commentId);
+	}
+
+	function cancelDeleteComment() {
+		deleteDialogOpen = false;
+		pendingDeleteId = null;
 	}
 
 	function formatDate(dateStr: string): string {
@@ -192,7 +214,7 @@
 								</button>
 								<button 
 									class="action-btn delete-btn" 
-									onclick={() => deleteComment(comment.id)}
+									onclick={() => requestDeleteComment(comment.id)}
 									disabled={deletingId === comment.id}
 									title="Delete comment"
 								>
@@ -267,7 +289,7 @@
 						</button>
 						<button 
 							class="action-btn-mobile delete" 
-							onclick={() => deleteComment(comment.id)}
+							onclick={() => requestDeleteComment(comment.id)}
 							disabled={deletingId === comment.id}
 						>
 							{#if deletingId === comment.id}
@@ -288,6 +310,16 @@
 		</div>
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={deleteDialogOpen}
+	title="Delete Comment"
+	message="Are you sure you want to permanently delete this comment? This cannot be undone."
+	confirmText="Delete"
+	variant="danger"
+	onconfirm={confirmDeleteComment}
+	oncancel={cancelDeleteComment}
+/>
 
 <style>
 	.comments-admin {

@@ -4,6 +4,7 @@
 	import ChunkedUploader from '$lib/components/ChunkedUploader.svelte';
 	import MediaBrowser from '$lib/components/MediaBrowser.svelte';
 	import VideoThumbnail from '$lib/components/VideoThumbnail.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import type { UploadResult } from '$lib/upload';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { untrack } from 'svelte';
@@ -58,6 +59,12 @@
 	let touchDragOverMediaId = $state<string | null>(null);
 	let touchStartY = $state(0);
 	let touchStartX = $state(0);
+
+	// ConfirmDialog state
+	let deleteSegmentDialogOpen = $state(false);
+	let pendingDeleteSegmentId = $state<string | null>(null);
+	let deleteEntryDialogOpen = $state(false);
+	let pendingDeleteEntryId = $state<string | null>(null);
 	let touchCloneInitialLeft = $state(0);
 	let touchCloneInitialTop = $state(0);
 	let touchCurrentMilestoneMedia = $state<Array<{ id: string; sortOrder: number }>>([]);
@@ -201,6 +208,45 @@
 
 	function formatDateForInput(date: Date) {
 		return date.toISOString().split('T')[0];
+	}
+
+	// ConfirmDialog handlers
+	function requestDeleteSegment(segmentId: string) {
+		pendingDeleteSegmentId = segmentId;
+		deleteSegmentDialogOpen = true;
+	}
+
+	function confirmDeleteSegment() {
+		if (!pendingDeleteSegmentId) return;
+		const form = document.getElementById(`delete-segment-${pendingDeleteSegmentId}`) as HTMLFormElement;
+		deleteSegmentDialogOpen = false;
+		const segmentId = pendingDeleteSegmentId;
+		pendingDeleteSegmentId = null;
+		form?.requestSubmit();
+	}
+
+	function cancelDeleteSegment() {
+		deleteSegmentDialogOpen = false;
+		pendingDeleteSegmentId = null;
+	}
+
+	function requestDeleteEntry(milestoneId: string) {
+		pendingDeleteEntryId = milestoneId;
+		deleteEntryDialogOpen = true;
+	}
+
+	function confirmDeleteEntry() {
+		if (!pendingDeleteEntryId) return;
+		const form = document.getElementById(`delete-entry-${pendingDeleteEntryId}`) as HTMLFormElement;
+		deleteEntryDialogOpen = false;
+		const entryId = pendingDeleteEntryId;
+		pendingDeleteEntryId = null;
+		form?.requestSubmit();
+	}
+
+	function cancelDeleteEntry() {
+		deleteEntryDialogOpen = false;
+		pendingDeleteEntryId = null;
 	}
 
 	async function handleMilestoneUpload(milestoneId: string, result: UploadResult) {
@@ -698,16 +744,14 @@
 								<button type="submit" class="btn-icon-small add" title="New entry">+</button>
 							</form>
 							<button class="btn-icon-small" onclick={() => (editingSegmentId = group.segment.id)} title="Edit segment">✏️</button>
-							<form method="POST" action="?/deleteSegment" use:enhance class="inline">
+							<form id="delete-segment-{group.segment.id}" method="POST" action="?/deleteSegment" use:enhance class="inline">
 								<input type="hidden" name="segmentId" value={group.segment.id} />
 								<button
-									type="submit"
+									type="button"
 									class="btn-icon-small danger"
 									title="Delete segment"
 									disabled={group.milestones.length > 0}
-									onsubmit={(e) => {
-										if (!confirm('Delete this segment?')) e.preventDefault();
-									}}
+									onclick={() => requestDeleteSegment(group.segment.id)}
 								>
 									×
 								</button>
@@ -1000,7 +1044,7 @@
 										<span>Published</span>
 									</label>
 									<div class="footer-buttons">
-										<form method="POST" action="?/deleteMilestone" use:enhance={() => {
+										<form id="delete-entry-{milestone.id}" method="POST" action="?/deleteMilestone" use:enhance={() => {
 											return async ({ result }) => {
 												if (result.type === 'success') {
 													editingMilestoneId = null;
@@ -1012,9 +1056,7 @@
 											};
 										}} class="delete-entry-form">
 											<input type="hidden" name="milestoneId" value={milestone.id} />
-											<button type="submit" class="btn-danger" onclick={(e) => {
-												if (!confirm('Delete this entry and all its media?')) e.preventDefault();
-											}}>Delete</button>
+											<button type="button" class="btn-danger" onclick={() => requestDeleteEntry(milestone.id)}>Delete</button>
 										</form>
 										<button type="button" class="btn-secondary" onclick={() => {
 											if (hasActiveUploads) {
@@ -1039,6 +1081,26 @@
 		{/each}
 	</div>
 </div>
+
+<ConfirmDialog
+	open={deleteSegmentDialogOpen}
+	title="Delete Segment"
+	message="Delete this segment?"
+	confirmText="Delete"
+	variant="danger"
+	onconfirm={confirmDeleteSegment}
+	oncancel={cancelDeleteSegment}
+/>
+
+<ConfirmDialog
+	open={deleteEntryDialogOpen}
+	title="Delete Entry"
+	message="Delete this entry and all its media?"
+	confirmText="Delete"
+	variant="danger"
+	onconfirm={confirmDeleteEntry}
+	oncancel={cancelDeleteEntry}
+/>
 
 <style>
 	.entries-page h1 {

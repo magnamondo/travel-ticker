@@ -2,12 +2,18 @@
 	import { enhance } from '$app/forms';
 	import { untrack } from 'svelte';
 	import { toasts } from '$lib/stores/toast.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
 
 	// Track last shown toast to avoid duplicates
 	let lastToastMessage = $state<string | null>(null);
 	let openMenuId = $state<string | null>(null);
+
+	// ConfirmDialog state
+	let deleteAllDialogOpen = $state(false);
+	let deleteJobDialogOpen = $state(false);
+	let pendingDeleteJobId = $state<string | null>(null);
 
 	function toggleMenu(jobId: string, event: MouseEvent) {
 		event.stopPropagation();
@@ -16,6 +22,37 @@
 
 	function closeMenu() {
 		openMenuId = null;
+	}
+
+	// ConfirmDialog handlers
+	function confirmDeleteAllJobs() {
+		deleteAllDialogOpen = false;
+		const form = document.getElementById('delete-all-jobs-form') as HTMLFormElement;
+		form?.requestSubmit();
+	}
+
+	function cancelDeleteAll() {
+		deleteAllDialogOpen = false;
+	}
+
+	function requestDeleteJob(jobId: string) {
+		pendingDeleteJobId = jobId;
+		deleteJobDialogOpen = true;
+	}
+
+	function confirmDeleteJob() {
+		if (!pendingDeleteJobId) return;
+		const form = document.getElementById(`delete-job-${pendingDeleteJobId}`) as HTMLFormElement;
+		deleteJobDialogOpen = false;
+		closeMenu();
+		const jobId = pendingDeleteJobId;
+		pendingDeleteJobId = null;
+		form?.requestSubmit();
+	}
+
+	function cancelDeleteJob() {
+		deleteJobDialogOpen = false;
+		pendingDeleteJobId = null;
 	}
 
 	// Show toast when form result changes
@@ -120,9 +157,9 @@
 				🗑️ Clear Failed ({data.stats.failed})
 			</button>
 		</form>
-		<form method="POST" action="?/deleteAll" use:enhance onsubmit={(e) => { if (!confirm('Delete ALL jobs? This cannot be undone.')) e.preventDefault(); }}>
+		<form id="delete-all-jobs-form" method="POST" action="?/deleteAll" use:enhance>
 			<input type="hidden" name="status" value="all" />
-			<button type="submit" class="btn-danger" disabled={data.stats.total === 0}>
+			<button type="button" class="btn-danger" disabled={data.stats.total === 0} onclick={() => (deleteAllDialogOpen = true)}>
 				🗑️ Clear All
 			</button>
 		</form>
@@ -219,7 +256,7 @@
 													</a>
 												{/if}
 												<div class="dropdown-divider"></div>
-												<form method="POST" action="?/delete" use:enhance={() => {
+												<form id="delete-job-{job.id}" method="POST" action="?/delete" use:enhance={() => {
 													return async ({ update }) => {
 														closeMenu();
 														await update();
@@ -227,9 +264,9 @@
 												}}>
 													<input type="hidden" name="jobId" value={job.id} />
 													<button 
-														type="submit" 
+														type="button" 
 														class="dropdown-item danger"
-														onclick={(e) => { if (!confirm('Delete this job?')) e.preventDefault(); }}
+														onclick={() => requestDeleteJob(job.id)}
 													>
 														<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/></svg>
 														Delete job
@@ -283,6 +320,26 @@
 		{/if}
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={deleteAllDialogOpen}
+	title="Delete All Jobs"
+	message="Delete ALL jobs? This cannot be undone."
+	confirmText="Delete All"
+	variant="danger"
+	onconfirm={confirmDeleteAllJobs}
+	oncancel={cancelDeleteAll}
+/>
+
+<ConfirmDialog
+	open={deleteJobDialogOpen}
+	title="Delete Job"
+	message="Delete this job?"
+	confirmText="Delete"
+	variant="danger"
+	onconfirm={confirmDeleteJob}
+	oncancel={cancelDeleteJob}
+/>
 
 <style>
 	.jobs-page {

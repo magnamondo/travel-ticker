@@ -3,12 +3,18 @@
 	import { untrack } from 'svelte';
 	import { toasts } from '$lib/stores/toast.svelte';
 	import { NOTIFICATION_TYPES } from '$lib/notification-types';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
 
 	let lastToastMessage = $state<string | null>(null);
 	let openMenuId = $state<string | null>(null);
 	let menuPosition = $state<{ top: number; right: number } | null>(null);
+
+	// ConfirmDialog state
+	let deleteAllDialogOpen = $state(false);
+	let deleteNotificationDialogOpen = $state(false);
+	let pendingDeleteNotificationId = $state<string | null>(null);
 
 	function toggleMenu(notificationId: string, event: MouseEvent) {
 		event.stopPropagation();
@@ -29,6 +35,37 @@
 	function closeMenu() {
 		openMenuId = null;
 		menuPosition = null;
+	}
+
+	// ConfirmDialog handlers
+	function confirmDeleteAllNotifications() {
+		deleteAllDialogOpen = false;
+		const form = document.getElementById('delete-all-notifications-form') as HTMLFormElement;
+		form?.requestSubmit();
+	}
+
+	function cancelDeleteAll() {
+		deleteAllDialogOpen = false;
+	}
+
+	function requestDeleteNotification(notificationId: string) {
+		pendingDeleteNotificationId = notificationId;
+		deleteNotificationDialogOpen = true;
+	}
+
+	function confirmDeleteNotification() {
+		if (!pendingDeleteNotificationId) return;
+		const form = document.getElementById(`delete-notification-${pendingDeleteNotificationId}`) as HTMLFormElement;
+		deleteNotificationDialogOpen = false;
+		closeMenu();
+		const notificationId = pendingDeleteNotificationId;
+		pendingDeleteNotificationId = null;
+		form?.requestSubmit();
+	}
+
+	function cancelDeleteNotification() {
+		deleteNotificationDialogOpen = false;
+		pendingDeleteNotificationId = null;
 	}
 
 	$effect(() => {
@@ -169,9 +206,9 @@
 				🗑️ Clear Skipped ({data.stats.skipped})
 			</button>
 		</form>
-		<form method="POST" action="?/deleteAll" use:enhance onsubmit={(e) => { if (!confirm('Delete ALL notifications? This cannot be undone.')) e.preventDefault(); }}>
+		<form id="delete-all-notifications-form" method="POST" action="?/deleteAll" use:enhance>
 			<input type="hidden" name="status" value="all" />
-			<button type="submit" class="btn-danger" disabled={data.stats.total === 0}>
+			<button type="button" class="btn-danger" disabled={data.stats.total === 0} onclick={() => (deleteAllDialogOpen = true)}>
 				🗑️ Clear All
 			</button>
 		</form>
@@ -263,7 +300,7 @@
 													</form>
 												{/if}
 												<div class="dropdown-divider"></div>
-												<form method="POST" action="?/delete" use:enhance={() => {
+												<form id="delete-notification-{notification.id}" method="POST" action="?/delete" use:enhance={() => {
 													return async ({ update }) => {
 														closeMenu();
 														await update();
@@ -271,9 +308,9 @@
 												}}>
 													<input type="hidden" name="notificationId" value={notification.id} />
 													<button 
-														type="submit" 
+														type="button" 
 														class="dropdown-item danger"
-														onclick={(e) => { if (!confirm('Delete this notification?')) e.preventDefault(); }}
+														onclick={() => requestDeleteNotification(notification.id)}
 													>
 														🗑️ Delete
 													</button>
@@ -326,6 +363,26 @@
 		{/if}
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={deleteAllDialogOpen}
+	title="Delete All Notifications"
+	message="Delete ALL notifications? This cannot be undone."
+	confirmText="Delete All"
+	variant="danger"
+	onconfirm={confirmDeleteAllNotifications}
+	oncancel={cancelDeleteAll}
+/>
+
+<ConfirmDialog
+	open={deleteNotificationDialogOpen}
+	title="Delete Notification"
+	message="Delete this notification?"
+	confirmText="Delete"
+	variant="danger"
+	onconfirm={confirmDeleteNotification}
+	oncancel={cancelDeleteNotification}
+/>
 
 <style>
 	.notifications-page {
