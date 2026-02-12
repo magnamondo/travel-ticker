@@ -343,6 +343,12 @@
 							<span>Email verified</span>
 						</label>
 					</div>
+					<div class="form-group">
+						<label class="checkbox-label">
+							<input type="checkbox" name="newMilestonesNotification" checked={editUser.profile?.notificationPreferences?.new_milestones === true} />
+							<span>Receive milestone notifications</span>
+						</label>
+					</div>
 					<div class="modal-actions">
 						<button type="button" class="btn-secondary" onclick={() => (editingUserId = null)}>Cancel</button>
 						<button type="submit" class="btn-primary">Save Changes</button>

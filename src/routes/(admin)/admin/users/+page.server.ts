@@ -6,6 +6,7 @@ import { fail } from '@sveltejs/kit';
 import { hashPassword } from '$lib/server/password';
 import { randomUUID } from 'crypto';
 import { ROLES, type Role } from '$lib/roles';
+import type { NotificationPreferences } from '$lib/notification-types';
 
 export const load: PageServerLoad = async () => {
 	const users = await db
@@ -19,7 +20,8 @@ export const load: PageServerLoad = async () => {
 				title: userProfile.title,
 				firstName: userProfile.firstName,
 				lastName: userProfile.lastName,
-				phoneNumber: userProfile.phoneNumber
+				phoneNumber: userProfile.phoneNumber,
+				notificationPreferences: userProfile.notificationPreferences
 			}
 		})
 		.from(user)
@@ -104,6 +106,7 @@ export const actions: Actions = {
 		const lastName = formData.get('lastName') as string;
 		const role = formData.get('role') as Role;
 		const emailVerified = formData.get('emailVerified') === 'on';
+		const newMilestonesNotification = formData.get('newMilestonesNotification') === 'on';
 
 		if (!userId || !email) {
 			return fail(400, { error: 'User ID and email are required' });
@@ -125,18 +128,28 @@ export const actions: Actions = {
 			.set({ email, roles, emailVerified })
 			.where(eq(user.id, userId));
 
+		// Build notification preferences
+		const notificationPreferences: NotificationPreferences = {
+			new_milestones: newMilestonesNotification
+		};
+
 		// Update or create profile
 		const existingProfile = await db.select().from(userProfile).where(eq(userProfile.userId, userId));
 		if (existingProfile.length > 0) {
 			await db.update(userProfile)
-				.set({ firstName: firstName || null, lastName: lastName || null })
+				.set({ 
+					firstName: firstName || null, 
+					lastName: lastName || null,
+					notificationPreferences
+				})
 				.where(eq(userProfile.userId, userId));
-		} else if (firstName || lastName) {
+		} else {
 			await db.insert(userProfile).values({
 				id: randomUUID(),
 				userId,
 				firstName: firstName || null,
-				lastName: lastName || null
+				lastName: lastName || null,
+				notificationPreferences
 			});
 		}
 

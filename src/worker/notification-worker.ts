@@ -9,7 +9,7 @@
 
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { eq, and, lte, inArray, sql } from 'drizzle-orm';
+import { eq, and, lte, gte, desc, inArray, sql } from 'drizzle-orm';
 import { config } from 'dotenv';
 import { Resend } from 'resend';
 
@@ -297,7 +297,7 @@ async function getSubscribers(typeId: string): Promise<Array<{ userId: string; e
  * Respects group restrictions - only notifies users who can access each milestone.
  */
 async function processNewMilestonesNotification(
-	queueItems: Array<{ id: string; groupKey: string }>
+	queueItems: Array<{ id: string; groupKey: string; createdAt: Date }>
 ): Promise<void> {
 	// Get all subscribers
 	const allSubscribers = await getSubscribers('new_milestones');
@@ -312,7 +312,15 @@ async function processNewMilestonesNotification(
 		return;
 	}
 
-	// Query fresh milestones that haven't been notified yet
+	// Find the earliest queue item timestamp - only include milestones created around this time
+	// Use a small buffer (1 minute) to handle race conditions between milestone creation and queue insertion
+	const earliestQueueTime = queueItems.reduce(
+		(min, item) => (item.createdAt < min ? item.createdAt : min),
+		queueItems[0].createdAt
+	);
+	const cutoffTime = new Date(earliestQueueTime.getTime() - 60 * 1000); // 1 minute buffer
+
+	// Query fresh milestones that haven't been notified yet and were created around queue time
 	const newMilestones = await db
 		.select({
 			id: milestone.id,
@@ -323,9 +331,11 @@ async function processNewMilestonesNotification(
 		.where(
 			and(
 				eq(milestone.published, true),
-				sql`${milestone.notifiedAt} IS NULL`
+				sql`${milestone.notifiedAt} IS NULL`,
+				gte(milestone.createdAt, cutoffTime)
 			)
-		);
+		)
+		.orderBy(desc(milestone.createdAt));
 
 	if (newMilestones.length === 0) {
 		// Mark all queue items as sent
@@ -387,7 +397,8 @@ async function processNewMilestonesNotification(
 
 	// Build per-subscriber email with only milestones they can access
 	const emails: EmailMessage[] = [];
-	let totalMilestonesNotified = 0;
+	// Track which milestones were actually sent to at least one subscriber
+	const milestonesActuallySent = new Set<string>();
 
 	for (const subscriber of allSubscribers) {
 		const userGroupIds = userGroupMap.get(subscriber.userId) ?? new Set();
@@ -411,6 +422,11 @@ async function processNewMilestonesNotification(
 			continue;
 		}
 
+		// Track that these milestones will be sent to at least one person
+		for (const m of accessibleMilestones) {
+			milestonesActuallySent.add(m.id);
+		}
+
 		const milestoneInfos: MilestoneInfo[] = accessibleMilestones.map(m => ({
 			id: m.id,
 			title: m.title,
@@ -429,19 +445,13 @@ async function processNewMilestonesNotification(
 			subject,
 			html
 		});
-
-		totalMilestonesNotified = Math.max(totalMilestonesNotified, accessibleMilestones.length);
 	}
 
 	if (emails.length === 0) {
-		// Still mark milestones as notified (they're group-restricted)
+		// No emails to send - don't mark any milestones as notified!
+		// Group-restricted milestones should wait until eligible subscribers exist.
+		// Just mark the queue items as sent (nothing to do).
 		const now = new Date();
-		for (const m of newMilestones) {
-			await db
-				.update(milestone)
-				.set({ notifiedAt: now })
-				.where(eq(milestone.id, m.id));
-		}
 		for (const item of queueItems) {
 			await db
 				.update(notificationQueue)
@@ -456,13 +466,15 @@ async function processNewMilestonesNotification(
 
 	const now = new Date();
 
-	// Mark milestones as notified
+	// Only mark milestones as notified if they were actually sent to someone
 	if (failed < emails.length) {
 		for (const m of newMilestones) {
-			await db
-				.update(milestone)
-				.set({ notifiedAt: now })
-				.where(eq(milestone.id, m.id));
+			if (milestonesActuallySent.has(m.id)) {
+				await db
+					.update(milestone)
+					.set({ notifiedAt: now })
+					.where(eq(milestone.id, m.id));
+			}
 		}
 	}
 
