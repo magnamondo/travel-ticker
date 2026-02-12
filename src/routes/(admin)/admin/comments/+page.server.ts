@@ -4,8 +4,8 @@ import { comment, milestone, segment, userProfile, user } from '$lib/server/db/s
 import { eq, desc } from 'drizzle-orm';
 
 export const load: PageServerLoad = async () => {
-	// Fetch all comments with related milestone and user info
-	const comments = await db
+	// Fetch all comments with related milestone, user and profile info
+	const commentsWithProfiles = await db
 		.select({
 			id: comment.id,
 			milestoneId: comment.milestoneId,
@@ -17,26 +17,35 @@ export const load: PageServerLoad = async () => {
 			content: comment.content,
 			createdAt: comment.createdAt,
 			updatedAt: comment.updatedAt,
-			isHidden: comment.isHidden
+			isHidden: comment.isHidden,
+			profileFirstName: userProfile.firstName,
+			profileLastName: userProfile.lastName,
+			userEmail: user.email
 		})
 		.from(comment)
 		.innerJoin(milestone, eq(comment.milestoneId, milestone.id))
 		.innerJoin(segment, eq(milestone.segmentId, segment.id))
+		.leftJoin(user, eq(comment.userId, user.id))
+		.leftJoin(userProfile, eq(comment.userId, userProfile.userId))
 		.orderBy(desc(comment.createdAt));
 
-	// Get user emails for comments with userId
-	const userIds = [...new Set(comments.filter(c => c.userId).map(c => c.userId!))];
-	const users = userIds.length > 0 
-		? await db.select({ id: user.id, email: user.email }).from(user)
-		: [];
-	const userEmailMap = new Map(users.map(u => [u.id, u.email]));
-
 	return {
-		comments: comments.map(c => ({
-			...c,
-			userEmail: c.userId ? userEmailMap.get(c.userId) ?? null : null,
+		comments: commentsWithProfiles.map(c => ({
+			id: c.id,
+			milestoneId: c.milestoneId,
+			milestoneTitle: c.milestoneTitle,
+			segmentName: c.segmentName,
+			segmentIcon: c.segmentIcon,
+			userId: c.userId,
+			// Dynamic display name: profile name > email > stored authorName (fallback)
+			authorName: c.profileFirstName
+				? (c.profileLastName ? `${c.profileFirstName} ${c.profileLastName}` : c.profileFirstName)
+				: (c.userEmail ?? c.authorName),
+			userEmail: c.userEmail ?? null,
+			content: c.content,
 			createdAt: c.createdAt.toISOString(),
-			updatedAt: c.updatedAt?.toISOString() ?? null
+			updatedAt: c.updatedAt?.toISOString() ?? null,
+			isHidden: c.isHidden
 		}))
 	};
 };

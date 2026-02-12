@@ -299,14 +299,10 @@ async function getSubscribers(typeId: string): Promise<Array<{ userId: string; e
 async function processNewMilestonesNotification(
 	queueItems: Array<{ id: string; groupKey: string; createdAt: Date }>
 ): Promise<void> {
-	console.log(`  📬 Processing ${queueItems.length} new_milestones queue item(s)...`);
-
 	// Get all subscribers
 	const allSubscribers = await getSubscribers('new_milestones');
-	console.log(`  👥 Found ${allSubscribers.length} subscriber(s) with new_milestones enabled`);
 	
 	if (allSubscribers.length === 0) {
-		console.log(`  ⚠️  No subscribers - marking queue items as skipped`);
 		// Mark all queue items as skipped (no recipients)
 		for (const item of queueItems) {
 			await db
@@ -341,11 +337,8 @@ async function processNewMilestonesNotification(
 			)
 		)
 		.orderBy(desc(milestone.createdAt));
-
-	console.log(`  📝 Found ${newMilestones.length} unnotified milestone(s) created after ${cutoffTime.toISOString()}`);
 	
 	if (newMilestones.length === 0) {
-		console.log(`  ⚠️  No milestones to notify about - marking queue items as skipped`);
 		// Mark all queue items as skipped (milestones already notified or unpublished)
 		for (const item of queueItems) {
 			await db
@@ -403,21 +396,10 @@ async function processNewMilestonesNotification(
 	
 	const segmentMap = new Map(segments.map(s => [s.id, s.name]));
 
-	// Log milestone group restrictions
-	for (const m of newMilestones) {
-		const groups = milestoneAllowedGroups.get(m.id)!;
-		if (groups.size > 0) {
-			console.log(`  🔐 Milestone "${m.title}" restricted to groups: [${[...groups].join(', ')}]`);
-		} else {
-			console.log(`  🌐 Milestone "${m.title}" is public`);
-		}
-	}
-
 	// Build per-subscriber email with only milestones they can access
 	const emails: EmailMessage[] = [];
 	// Track which milestones were actually sent to at least one subscriber
 	const milestonesActuallySent = new Set<string>();
-	let skippedSubscribers = 0;
 
 	for (const subscriber of allSubscribers) {
 		const userGroupIds = userGroupMap.get(subscriber.userId) ?? new Set();
@@ -438,8 +420,6 @@ async function processNewMilestonesNotification(
 
 		if (accessibleMilestones.length === 0) {
 			// This subscriber can't see any of the new milestones
-			console.log(`  ⛔ ${subscriber.email} has no access (user groups: [${[...userGroupIds].join(', ')}])`);
-			skippedSubscribers++;
 			continue;
 		}
 
@@ -468,12 +448,9 @@ async function processNewMilestonesNotification(
 		});
 	}
 
-	console.log(`  📊 Result: ${emails.length} email(s) to send, ${skippedSubscribers} subscriber(s) skipped due to access`);
-
 	if (emails.length === 0) {
 		// No emails to send - don't mark any milestones as notified!
 		// Group-restricted milestones should wait until eligible subscribers exist.
-		console.log(`  ⚠️  No emails to send - marking queue items as skipped (milestones NOT marked as notified)`);
 		const now = new Date();
 		for (const item of queueItems) {
 			await db
@@ -485,16 +462,12 @@ async function processNewMilestonesNotification(
 	}
 
 	// Send batch
-	console.log(`  📤 Sending ${emails.length} email(s)...`);
 	const { sent, failed } = await sendEmailBatch(emails);
-	console.log(`  ✅ Sent: ${sent}, ❌ Failed: ${failed}`);
 
 	const now = new Date();
 
 	// Only mark milestones as notified if they were actually sent to someone
 	if (failed < emails.length) {
-		const notifiedCount = [...milestonesActuallySent].length;
-		console.log(`  📌 Marking ${notifiedCount} milestone(s) as notified`);
 		for (const m of newMilestones) {
 			if (milestonesActuallySent.has(m.id)) {
 				await db
