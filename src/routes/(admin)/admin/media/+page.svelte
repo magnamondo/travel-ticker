@@ -9,6 +9,7 @@
 	let lastToastMessage = $state<string | null>(null);
 	let openMenuId = $state<string | null>(null);
 	let confirmDeleteAll = $state(false);
+	let confirmDeleteChunks = $state(false);
 
 	$effect(() => {
 		const message = form?.success ? form?.message : form?.error;
@@ -103,9 +104,24 @@
 			{/if}
 		</div>
 		{#if data.stats.chunksSizeBytes > 0}
-			<div class="stat-card">
+			<div class="stat-card warning">
 				<span class="stat-value">{data.stats.chunksSize}</span>
 				<span class="stat-label">Pending Chunks</span>
+				{#if confirmDeleteChunks}
+					<div class="stat-action">
+						<form method="POST" action="?/deleteAllChunks" use:enhance={() => {
+							return async ({ update }) => {
+								confirmDeleteChunks = false;
+								await update();
+							};
+						}}>
+							<button type="submit" class="btn-small danger">Confirm</button>
+						</form>
+						<button class="btn-small" onclick={() => (confirmDeleteChunks = false)}>Cancel</button>
+					</div>
+				{:else}
+					<button class="btn-small" onclick={() => (confirmDeleteChunks = true)}>Clear</button>
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -452,7 +468,6 @@
 	.media-card {
 		background: var(--color-bg-elevated);
 		border-radius: var(--radius-md);
-		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 	}
@@ -462,6 +477,7 @@
 		aspect-ratio: 1;
 		background: var(--color-bg-secondary);
 		overflow: hidden;
+		border-radius: var(--radius-md) var(--radius-md) 0 0;
 	}
 
 	.media-preview img {
@@ -858,5 +874,38 @@
 		.pagination-controls {
 			justify-content: center;
 		}
+	}
+
+	/* Small inline buttons for stat cards */
+	.stat-action {
+		display: flex;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+
+	.btn-small {
+		padding: 0.25rem 0.5rem;
+		font-size: 0.75rem;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.btn-small:hover {
+		background: var(--color-bg-elevated);
+		color: var(--color-text);
+	}
+
+	.btn-small.danger {
+		background: var(--color-danger);
+		border-color: var(--color-danger);
+		color: white;
+	}
+
+	.btn-small.danger:hover {
+		opacity: 0.9;
 	}
 </style>

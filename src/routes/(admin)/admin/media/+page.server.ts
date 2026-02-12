@@ -3,7 +3,7 @@ import { db } from '$lib/server/db';
 import { milestoneMedia, videoJob, milestone } from '$lib/server/db/schema';
 import { desc, eq, sql } from 'drizzle-orm';
 import { fail } from '@sveltejs/kit';
-import { readdir, unlink, stat } from 'fs/promises';
+import { readdir, unlink, stat, rm } from 'fs/promises';
 import { join, basename } from 'path';
 import { existsSync } from 'fs';
 
@@ -297,6 +297,45 @@ export const actions: Actions = {
 		return {
 			success: true,
 			message: `Deleted ${deleted} orphaned files${failed > 0 ? `, ${failed} failed` : ''}`
+		};
+	},
+
+	deleteAllChunks: async () => {
+		if (!existsSync(CHUNKS_DIR)) {
+			return { success: true, message: 'No chunks directory found' };
+		}
+
+		const sessionDirs = await readdir(CHUNKS_DIR, { withFileTypes: true });
+		let deleted = 0;
+		let failed = 0;
+		let totalSize = 0;
+
+		for (const sessionDir of sessionDirs) {
+			if (sessionDir.isDirectory()) {
+				const sessionPath = join(CHUNKS_DIR, sessionDir.name);
+				try {
+					// Calculate size before deleting
+					const chunks = await readdir(sessionPath);
+					for (const chunk of chunks) {
+						const chunkPath = join(sessionPath, chunk);
+						try {
+							const stats = await stat(chunkPath);
+							totalSize += stats.size;
+						} catch {
+							// Ignore stat errors
+						}
+					}
+					await rm(sessionPath, { recursive: true });
+					deleted++;
+				} catch {
+					failed++;
+				}
+			}
+		}
+
+		return {
+			success: true,
+			message: `Cleared ${deleted} upload sessions (${formatBytes(totalSize)})${failed > 0 ? `, ${failed} failed` : ''}`
 		};
 	}
 };
