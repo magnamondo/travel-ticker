@@ -271,11 +271,16 @@ async function transcodeVideo(inputPath: string, outputPath: string): Promise<bo
 			'-i', inputPath,
 			'-vf', scaleFilter,
 			'-c:v', 'libx264',
+			'-profile:v', 'main',         // Wide compatibility (iPhone 6+, most browsers)
+			'-level', '4.0',              // Supports 1080p @ 30fps
 			'-preset', 'medium',
 			'-crf', '23',
+			'-pix_fmt', 'yuv420p',        // Required for browser playback
+			'-g', '48',                   // Keyframe every ~2s (better seeking)
 			'-c:a', 'aac',
 			'-b:a', '128k',
-			'-movflags', '+faststart',
+			'-ar', '48000',               // Standard sample rate
+			'-movflags', '+faststart',    // Enable streaming (moov at start)
 			'-y',
 			outputPath
 		]);
@@ -307,11 +312,16 @@ async function resizeVideoIfNeeded(inputPath: string, dimensions: VideoDimension
 			'-i', inputPath,
 			'-vf', scaleFilter,
 			'-c:v', 'libx264',
+			'-profile:v', 'main',         // Wide compatibility (iPhone 6+, most browsers)
+			'-level', '4.0',              // Supports 1080p @ 30fps
 			'-preset', 'medium',
 			'-crf', '23',
+			'-pix_fmt', 'yuv420p',        // Required for browser playback
+			'-g', '48',                   // Keyframe every ~2s (better seeking)
 			'-c:a', 'aac',
 			'-b:a', '128k',
-			'-movflags', '+faststart',
+			'-ar', '48000',               // Standard sample rate
+			'-movflags', '+faststart',    // Enable streaming (moov at start)
 			'-y',
 			tempPath
 		]);
