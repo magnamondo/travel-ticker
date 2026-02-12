@@ -809,7 +809,7 @@
 								</div>
 								{#if editingMilestoneId === milestone.id}
 									<div class="milestone-edit-panel">
-								<form bind:this={editForms[milestone.id]} method="POST" action="?/updateMilestone" use:enhance={() => {
+								<form id="edit-form-{milestone.id}" bind:this={editForms[milestone.id]} method="POST" action="?/updateMilestone" use:enhance={() => {
 									return async ({ result, update }) => {
 										await update();
 										if (result.type === 'success') {
