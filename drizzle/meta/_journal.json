@@ -36,6 +36,27 @@
       "when": 1770653323439,
       "tag": "0004_skinny_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1770845798989,
+      "tag": "0005_hesitant_vance_astro",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1770857125852,
+      "tag": "0006_real_jigsaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1770859880958,
+      "tag": "0007_extension_count",
+      "breakpoints": true
     }
   ]
 }

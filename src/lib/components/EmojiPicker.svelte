@@ -185,6 +185,7 @@
 		padding-left: 0.25rem;
 		position: sticky;
 		top: 0;
+		user-select: none;
 		background: #f8fafc;
 		z-index: 1;
 		padding-top: 0.25rem;
@@ -209,6 +210,7 @@
 		align-items: center;
 		justify-content: center;
 		border: none;
+		user-select: none;
 		background: transparent;
 		font-size: 1.5rem;
 		line-height: 1;
@@ -241,6 +243,7 @@
 		font-size: 1.25rem;
 		transition: all 0.2s;
 		flex: 1;
+		user-select: none;
 		display: flex;
 		justify-content: center;
 		align-items: center;

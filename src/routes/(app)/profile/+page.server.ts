@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import * as table from '$lib/server/db/schema';
 import * as auth from '$lib/server/auth';
 import { hashPassword, verifyPassword } from '$lib/server/password';
+import { NOTIFICATION_TYPES, type NotificationPreferences } from '$lib/notification-types';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async (event) => {
@@ -21,7 +22,9 @@ export const load: PageServerLoad = async (event) => {
 			id: event.locals.user.id,
 			email: event.locals.user.email
 		},
-		profile: profile ?? null
+		profile: profile ?? null,
+		notificationTypes: NOTIFICATION_TYPES,
+		notificationPreferences: (profile?.notificationPreferences ?? {}) as NotificationPreferences
 	};
 };
 
@@ -133,6 +136,41 @@ export const actions: Actions = {
 			.where(eq(table.user.id, event.locals.user.id));
 
 		return { passwordSuccess: true };
+	},
+
+	updateNotifications: async (event) => {
+		if (!event.locals.user) {
+			throw redirect(303, '/login');
+		}
+
+		const formData = await event.request.formData();
+		
+		// Build preferences object from form data
+		const preferences: NotificationPreferences = {};
+		for (const type of NOTIFICATION_TYPES) {
+			preferences[type.id] = formData.get(`notify_${type.id}`) === 'on';
+		}
+
+		// Check if profile exists
+		const [existingProfile] = await db
+			.select()
+			.from(table.userProfile)
+			.where(eq(table.userProfile.userId, event.locals.user.id));
+
+		if (existingProfile) {
+			await db
+				.update(table.userProfile)
+				.set({ notificationPreferences: preferences })
+				.where(eq(table.userProfile.userId, event.locals.user.id));
+		} else {
+			await db.insert(table.userProfile).values({
+				id: crypto.randomUUID(),
+				userId: event.locals.user.id,
+				notificationPreferences: preferences
+			});
+		}
+
+		return { notificationsSuccess: true };
 	},
 
 	logout: async (event) => {

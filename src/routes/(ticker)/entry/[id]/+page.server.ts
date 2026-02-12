@@ -2,18 +2,12 @@ import type { PageServerLoad, Actions } from './$types';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { milestone, segment, milestoneMedia, comment, reaction, userProfile } from '$lib/server/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and, gte } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { canComment, canReact } from '$lib/roles';
+import { isAdmin, canComment } from '$lib/roles';
 import { canUserAccessMilestone } from '$lib/server/groups';
 
-export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) => {
-	// Cache the entry page for 1 hour, but allow invalidation via 'entry-[id]' tag
-	setHeaders({
-		'Cache-Control': 'public, max-age=3600',
-		'Surrogate-Key': `entry-${params.id}`
-	});
-
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// Fetch milestone with segment
 	const milestoneResult = await db
 		.select({
@@ -159,24 +153,22 @@ export const load: PageServerLoad = async ({ params, locals, url, setHeaders }) 
 			reactions: reactionCounts,
 			meta: milestoneResult.meta && milestoneResult.meta.length > 0 ? milestoneResult.meta : null
 		},
-		comments: comments.map(c => ({
-			id: c.id,
-			milestoneId: c.milestoneId,
-			authorName: c.authorName,
-			content: c.content,
-			createdAt: c.createdAt.toISOString(),
-			reactions: commentReactionsByComment[c.id] || {}
-		})),
-		user: locals.user ? {
-			id: locals.user.id,
-			email: locals.user.email,
-			displayName: userDisplayName,
-			canComment: canComment(locals.user.roles),
-			canReact: canReact(locals.user.roles)
-		} : null
-	};
+		comments: comments
+			// Filter out hidden comments for non-admins, but allow owners to see their own hidden comments
+			.filter(c => !c.isHidden || (locals.user && (isAdmin(locals.user.roles) || c.userId === locals.user.id)))
+			.map(c => ({
+				id: c.id,
+				milestoneId: c.milestoneId,
+				userId: c.userId,
+				authorName: c.authorName,
+				content: c.content,
+				createdAt: c.createdAt.toISOString(),
+				updatedAt: c.updatedAt?.toISOString() ?? null,
+				isHidden: c.isHidden,
+				reactions: commentReactionsByComment[c.id] || {}
+			})),
+		userDisplayName	};
 };
-
 export const actions: Actions = {
 	default: async ({ request, params, locals }) => {
 		if (!locals.user) {
@@ -200,6 +192,25 @@ export const actions: Actions = {
 		content = content
 			.replace(/<[^>]*>/g, '')
 			.replace(/\n{3,}/g, '\n\n');
+
+		// Check for duplicate submission (same user, same content, within 30 seconds)
+		const thirtySecondsAgo = new Date(Date.now() - 30 * 1000);
+		const existingComment = await db
+			.select({ id: comment.id })
+			.from(comment)
+			.where(
+				and(
+					eq(comment.milestoneId, params.id),
+					eq(comment.userId, locals.user.id),
+					eq(comment.content, content),
+					gte(comment.createdAt, thirtySecondsAgo)
+				)
+			)
+			.get();
+
+		if (existingComment) {
+			return fail(400, { error: 'You already posted this comment', content: '' });
+		}
 
 		// Get author name from profile or email
 		const profile = await db

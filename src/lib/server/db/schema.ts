@@ -1,4 +1,5 @@
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { NotificationPreferences } from '$lib/notification-types';
 
 export const user = sqliteTable('user', { 
 	id: text('id').primaryKey(), 
@@ -27,7 +28,31 @@ export const userProfile = sqliteTable('user_profile', {
 	firstName: text('first_name'),
 	lastName: text('last_name'),
 	dateOfBirth: integer('date_of_birth', { mode: 'timestamp' }),
-	phoneNumber: text('phone_number')
+	phoneNumber: text('phone_number'),
+	notificationPreferences: text('notification_preferences', { mode: 'json' })
+		.$type<NotificationPreferences>()
+		.default({ new_milestones: true })
+});
+
+// Notification queue - delayed sending with cancellation & batching support
+export const notificationQueue = sqliteTable('notification_queue', {
+	id: text('id').primaryKey(),
+	// Notification type (e.g., 'new_milestones')
+	typeId: text('type_id').notNull(),
+	// Grouping key - notifications with same key can be batched or deduplicated
+	// e.g., "milestone:123" or "comment:456:reactions"
+	groupKey: text('group_key').notNull(),
+	// JSON payload for the email template
+	payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+	// Status: skipped = processed but no recipients (no subscribers or no group access)
+	status: text('status', { enum: ['pending', 'cancelled', 'sent', 'failed', 'skipped'] }).notNull().default('pending'),
+	// Don't send before this time (allows cancellation window)
+	sendAfter: integer('send_after', { mode: 'timestamp' }).notNull(),
+	// How many times this notification has been extended (for exponential backoff)
+	extensionCount: integer('extension_count').notNull().default(0),
+	createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+	sentAt: integer('sent_at', { mode: 'timestamp' }),
+	error: text('error')
 });
 
 // Groups for content access control
@@ -66,6 +91,7 @@ export const milestone = sqliteTable('milestone', {
 	avatar: text('avatar'),
 	meta: text('meta', { mode: 'json' }).$type<{ type: 'coordinates' | 'link' | 'icon'; value: string; label?: string; icon?: string }[]>().default([]),
 	published: integer('published', { mode: 'boolean' }).default(false).notNull(),
+	notifiedAt: integer('notified_at', { mode: 'timestamp' }), // When subscribers were notified
 	sortOrder: integer('sort_order').notNull().default(0),
 	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
 });
@@ -119,7 +145,9 @@ export const comment = sqliteTable('comment', {
 		.references(() => user.id, { onDelete: 'set null' }),
 	authorName: text('author_name').notNull(),
 	content: text('content').notNull(),
-	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
+	createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp' }),
+	isHidden: integer('is_hidden', { mode: 'boolean' }).default(false).notNull()
 });
 
 export const reaction = sqliteTable('reaction', {
@@ -166,3 +194,4 @@ export type UploadSession = typeof uploadSession.$inferSelect;
 export type Comment = typeof comment.$inferSelect;
 export type Reaction = typeof reaction.$inferSelect;
 export type VideoJob = typeof videoJob.$inferSelect;
+export type NotificationQueue = typeof notificationQueue.$inferSelect;

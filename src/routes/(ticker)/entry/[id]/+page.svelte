@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Reactions from '$lib/components/Reactions.svelte';
 	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { getMapsUrl } from '$lib/maps';
 	import { toasts } from '$lib/stores/toast.svelte';
 
@@ -19,6 +22,130 @@
 	let commentReactionsOverrides = new SvelteMap<string, ReactionCount[]>();
 	let commentsListEl: HTMLUListElement | null = $state(null);
 	let highlightedCommentId = $state<string | null>(null);
+
+	// Edit/delete state
+	let editingCommentId = $state<string | null>(null);
+	let editContent = $state('');
+	let editSubmitting = $state(false);
+	let deleteSubmitting = $state<string | null>(null);
+	let hideSubmitting = $state<string | null>(null);
+	
+	// Track deleted comments locally (to hide them immediately)
+	let deletedCommentIds = $state<Set<string>>(new Set());
+
+	// Delete confirmation dialog state
+	let deleteDialogOpen = $state(false);
+	let pendingDeleteCommentId = $state<string | null>(null);
+
+	const EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+	function isWithinEditWindow(createdAt: string): boolean {
+		return Date.now() - new Date(createdAt).getTime() < EDIT_WINDOW_MS;
+	}
+
+	function canEditComment(comment: { userId: string | null; createdAt: string }): boolean {
+		if (!data.user) return false;
+		return comment.userId === data.user.id && isWithinEditWindow(comment.createdAt);
+	}
+
+	function canDeleteComment(comment: { userId: string | null; createdAt: string }): boolean {
+		if (!data.user) return false;
+		// Admins can delete any comment, owners can delete within 5 min
+		if (data.user.isAdmin) return true;
+		return comment.userId === data.user.id && isWithinEditWindow(comment.createdAt);
+	}
+
+	function startEditing(comment: { id: string; content: string }) {
+		editingCommentId = comment.id;
+		editContent = comment.content;
+	}
+
+	function cancelEditing() {
+		editingCommentId = null;
+		editContent = '';
+	}
+
+	async function saveEdit(commentId: string) {
+		if (!editContent.trim()) return;
+		editSubmitting = true;
+		try {
+			const res = await fetch(`/api/comments/${commentId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content: editContent })
+			});
+			if (res.ok) {
+				toasts.success('Comment updated');
+				editingCommentId = null;
+				editContent = '';
+				await invalidateAll(); // refresh data from server
+			} else {
+				const err = await res.json();
+				toasts.error(err.message || 'Failed to update comment');
+			}
+		} catch {
+			toasts.error('Failed to update comment');
+		} finally {
+			editSubmitting = false;
+		}
+	}
+
+	function requestDeleteComment(commentId: string) {
+		pendingDeleteCommentId = commentId;
+		deleteDialogOpen = true;
+	}
+
+	function cancelDelete() {
+		deleteDialogOpen = false;
+		pendingDeleteCommentId = null;
+	}
+
+	async function confirmDelete() {
+		if (!pendingDeleteCommentId) return;
+		deleteDialogOpen = false;
+		const commentId = pendingDeleteCommentId;
+		pendingDeleteCommentId = null;
+		
+		deleteSubmitting = commentId;
+		try {
+			const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
+			if (res.ok) {
+				toasts.success('Comment deleted');
+				deletedCommentIds.add(commentId);
+				deletedCommentIds = deletedCommentIds; // trigger reactivity
+				await invalidateAll(); // refresh data from server
+			} else {
+				const err = await res.json();
+				toasts.error(err.message || 'Failed to delete comment');
+			}
+		} catch {
+			toasts.error('Failed to delete comment');
+		} finally {
+			deleteSubmitting = null;
+		}
+	}
+
+	async function toggleHideComment(commentId: string, currentlyHidden: boolean) {
+		hideSubmitting = commentId;
+		try {
+			const res = await fetch(`/api/comments/${commentId}/hide`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ hide: !currentlyHidden })
+			});
+			if (res.ok) {
+				toasts.success(currentlyHidden ? 'Comment unhidden' : 'Comment hidden');
+				await invalidateAll(); // refresh data from server
+			} else {
+				const err = await res.json();
+				toasts.error(err.message || 'Failed to update comment');
+			}
+		} catch {
+			toasts.error('Failed to update comment');
+		} finally {
+			hideSubmitting = null;
+		}
+	}
 
 	// Get reactions for a comment - use override if set, otherwise use server data
 	function getCommentReactions(commentId: string): ReactionCount[] {
@@ -141,7 +268,7 @@
 </svelte:head>
 
 <div class="entry-page">
-	<a href="/" class="back-link">
+	<a href={resolve("/")} class="back-link">
 		<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 			<path d="M19 12H5M12 19l-7-7 7-7"/>
 		</svg>
@@ -252,10 +379,10 @@
 				<form
 					method="POST"
 					use:enhance={() => {
+						if (submitting) return () => {}; // Prevent double submission
 						submitting = true;
 						return async ({ update, result }) => {
 							await update();
-							submitting = false;
 							if (result.type === 'success') {
 								content = '';
 								toasts.success('Comment added!');
@@ -274,16 +401,23 @@
 										highlightedCommentId = null;
 									}, 4000);
 								}, 100);
-							} else if (result.type === 'failure') {
-								const errorMsg = (result.data as { error?: string })?.error ?? 'Failed to add comment';
-								toasts.error(errorMsg);
+								// Keep submit disabled briefly to prevent rapid resubmits
+								setTimeout(() => {
+									submitting = false;
+								}, 1000);
+							} else {
+								submitting = false;
+								if (result.type === 'failure') {
+									const errorMsg = (result.data as { error?: string })?.error ?? 'Failed to add comment';
+									toasts.error(errorMsg);
+								}
 							}
 						};
 					}}
 					class="comment-form"
 				>
 					<div class="posting-as">
-						Posting as <strong>{data.user.displayName}</strong>
+						Posting as <strong>{data.userDisplayName}</strong>
 					</div>
 					<div class="form-row">
 						<label for="content" class="visually-hidden">Your comment</label>
@@ -294,9 +428,10 @@
 							rows="3"
 							bind:value={content}
 							required
+							disabled={submitting}
 						></textarea>
 					</div>
-					<button type="submit" disabled={submitting}>
+					<button type="submit" disabled={submitting || !content.trim()}>
 						{#if submitting}
 							Posting...
 						{:else}
@@ -311,25 +446,114 @@
 			{/if}
 		{:else}
 			<div class="login-prompt">
-				<p>Please <a href="/login?redirectTo=/entry/{data.milestone.id}">log in</a> to leave a comment.</p>
+				<p>Please <a href={`${resolve('/login')}?redirectTo=${encodeURIComponent(`/entry/${data.milestone.id}`)}`}>log in</a> to leave a comment.</p>
 			</div>
 		{/if}
 
 		{#if data.comments.length > 0}
 			<ul class="comments-list" bind:this={commentsListEl}>
-				{#each data.comments as comment (comment.id)}
-					<li class="comment" class:comment-highlight={highlightedCommentId === comment.id} data-comment-id={comment.id}>
+				{#each data.comments.filter(c => !deletedCommentIds.has(c.id)) as comment (comment.id)}
+					<li 
+						class="comment" 
+						class:comment-highlight={highlightedCommentId === comment.id} 
+						class:comment-hidden={comment.isHidden}
+						data-comment-id={comment.id}
+					>
 						<div class="comment-header">
-							<span class="comment-author">{comment.authorName}</span>
-							<time class="comment-date" datetime={comment.createdAt}>
-								{new Date(comment.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-							</time>
+							<div class="comment-meta">
+								<span class="comment-author">{comment.authorName}</span>
+								<time class="comment-date" datetime={comment.createdAt}>
+									{new Date(comment.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+								</time>
+								{#if comment.updatedAt}
+									<span class="comment-edited" title="Edited {new Date(comment.updatedAt).toLocaleString()}">(edited)</span>
+								{/if}
+								{#if comment.isHidden && data.user?.isAdmin}
+									<span class="comment-hidden-badge">Hidden</span>
+								{:else if comment.isHidden && comment.userId === data.user?.id}
+									<span class="comment-hidden-icon" title="This comment is hidden from other users">
+										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+									</span>
+								{/if}
+							</div>
+							<div class="comment-actions">
+								{#if canEditComment(comment)}
+									<button 
+										type="button" 
+										class="action-btn edit-btn" 
+										onclick={() => startEditing(comment)}
+										title="Edit comment"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+									</button>
+								{/if}
+								{#if canDeleteComment(comment)}
+									<button 
+										type="button" 
+										class="action-btn delete-btn" 
+										onclick={() => requestDeleteComment(comment.id)}
+										disabled={deleteSubmitting === comment.id}
+										title="Delete comment"
+									>
+										{#if deleteSubmitting === comment.id}
+											<span class="spinner"></span>
+										{:else}
+											<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+										{/if}
+									</button>
+								{/if}
+								{#if data.user?.isAdmin}
+									<button 
+										type="button" 
+										class="action-btn hide-btn" 
+										onclick={() => toggleHideComment(comment.id, comment.isHidden)}
+										disabled={hideSubmitting === comment.id}
+										title={comment.isHidden ? 'Unhide comment' : 'Hide comment'}
+									>
+										{#if hideSubmitting === comment.id}
+											<span class="spinner"></span>
+										{:else if comment.isHidden}
+											<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+										{:else}
+											<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+										{/if}
+									</button>
+								{/if}
+							</div>
 						</div>
-						<p class="comment-content">{@html comment.content
-							.replace(/&/g, '&amp;')
-							.replace(/</g, '&lt;')
-							.replace(/>/g, '&gt;')
-							.replace(/\n/g, '<br>')}</p>
+						{#if editingCommentId === comment.id}
+							<div class="edit-form">
+								<textarea
+									bind:value={editContent}
+									rows="3"
+									placeholder="Edit your comment..."
+								></textarea>
+								<div class="edit-actions">
+									<button 
+										type="button" 
+										class="btn-secondary" 
+										onclick={cancelEditing}
+										disabled={editSubmitting}
+									>
+										Cancel
+									</button>
+									<button 
+										type="button" 
+										class="btn-primary" 
+										onclick={() => saveEdit(comment.id)}
+										disabled={editSubmitting || !editContent.trim()}
+									>
+										{editSubmitting ? 'Saving...' : 'Save'}
+									</button>
+								</div>
+							</div>
+						{:else}
+							<p class="comment-content">{@html comment.content
+								.replace(/&/g, '&amp;')
+								.replace(/</g, '&lt;')
+								.replace(/>/g, '&gt;')
+								.replace(/\n/g, '<br>')}</p>
+						{/if}
 						<div class="comment-reactions">
 							<Reactions
 								reactions={getCommentReactions(comment.id)}
@@ -357,6 +581,17 @@
 		onclose={closeLightbox}
 	/>
 {/if}
+
+<ConfirmDialog
+	open={deleteDialogOpen}
+	title="Delete Comment"
+	message="Are you sure you want to delete this comment? This action cannot be undone."
+	confirmText="Delete"
+	cancelText="Cancel"
+	variant="danger"
+	onconfirm={confirmDelete}
+	oncancel={cancelDelete}
+/>
 
 <style>
 	.entry-page {
@@ -733,6 +968,161 @@
 		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		padding: 2rem 0;
+	}
+
+	/* Comment moderation and edit/delete styles */
+	.comment-hidden {
+		opacity: 0.6;
+		border-left: 3px solid var(--color-warning, #f59e0b);
+	}
+
+	.comment-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.comment-edited {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.comment-hidden-badge {
+		font-size: 0.65rem;
+		padding: 0.125rem 0.375rem;
+		background: var(--color-warning, #f59e0b);
+		color: white;
+		border-radius: var(--radius-sm);
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+
+	.comment-hidden-icon {
+		display: inline-flex;
+		align-items: center;
+		color: var(--color-warning, #f59e0b);
+	}
+
+	.comment-actions {
+		display: flex;
+		gap: 0.25rem;
+	}
+
+	.action-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border: none;
+		background: transparent;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		color: var(--color-text-muted);
+		transition: background-color 0.15s, color 0.15s;
+	}
+
+	.action-btn:hover:not(:disabled) {
+		background: var(--color-bg-secondary);
+	}
+
+	.action-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.edit-btn:hover:not(:disabled) {
+		color: var(--color-primary);
+	}
+
+	.delete-btn:hover:not(:disabled) {
+		color: var(--color-danger, #ef4444);
+	}
+
+	.hide-btn:hover:not(:disabled) {
+		color: var(--color-warning, #f59e0b);
+	}
+
+	.spinner {
+		width: 12px;
+		height: 12px;
+		border: 2px solid var(--color-border);
+		border-top-color: var(--color-primary);
+		border-radius: 50%;
+		animation: spinner-spin 0.6s linear infinite;
+	}
+
+	@keyframes spinner-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.edit-form {
+		margin: 0.5rem 0;
+	}
+
+	.edit-form textarea {
+		width: 100%;
+		padding: 0.75rem;
+		font-size: 0.875rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg);
+		color: var(--color-text);
+		resize: vertical;
+		min-height: 80px;
+	}
+
+	.edit-form textarea:focus {
+		outline: none;
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent);
+	}
+
+	.edit-actions {
+		display: flex;
+		gap: 0.5rem;
+		justify-content: flex-end;
+		margin-top: 0.5rem;
+	}
+
+	.btn-secondary,
+	.btn-primary {
+		padding: 0.5rem 1rem;
+		font-size: 0.875rem;
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		transition: background-color 0.15s, opacity 0.15s;
+	}
+
+	.btn-secondary {
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: var(--color-bg-tertiary, var(--color-border));
+	}
+
+	.btn-primary {
+		background: var(--color-primary);
+		border: none;
+		color: white;
+	}
+
+	.btn-primary:hover:not(:disabled) {
+		opacity: 0.9;
+	}
+
+	.btn-secondary:disabled,
+	.btn-primary:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	@media (max-width: 640px) {

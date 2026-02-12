@@ -2,15 +2,14 @@ import { redirect } from '@sveltejs/kit';
 import * as auth from '$lib/server/auth';
 import type { PageServerLoad, Actions } from './$types';
 
-export const load: PageServerLoad = async ({ fetch, locals, url, setHeaders }) => {
+export const load: PageServerLoad = async ({ fetch, url }) => {
 	const response = await fetch('/api/milestones?offset=0&limit=3');
 	const data = await response.json();
 
 	return {
 		origin: url.origin,
 		milestones: data.milestones,
-		hasMore: data.hasMore,
-		user: locals.user ? { id: locals.user.id, email: locals.user.email, roles: locals.user.roles } : null
+		hasMore: data.hasMore
 	};
 };
 

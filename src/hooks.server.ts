@@ -1,11 +1,9 @@
 import type { Handle } from '@sveltejs/kit';
-import { redirect } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import * as auth from '$lib/server/auth';
-import { isAdmin } from '$lib/roles';
 import { logger } from '$lib/server/logger';
-import { env } from '$env/dynamic/private';
-import { building } from '$app/environment';
+// import { env } from '$env/dynamic/private';
+// import { building } from '$app/environment';
 
 // Validate critical environment variables at startup (skip during build)
 /*
@@ -56,16 +54,6 @@ const handleAuth: Handle = async ({ event, resolve }) => {
 
 		event.locals.user = user;
 		event.locals.session = session;
-	}
-
-	// Protect admin routes - only allow users with admin role
-	if (event.url.pathname.startsWith('/admin')) {
-		if (!event.locals.user) {
-			throw redirect(303, '/login?redirectTo=' + encodeURIComponent(event.url.pathname));
-		}
-		if (!isAdmin(event.locals.user.roles)) {
-			throw redirect(303, '/');
-		}
 	}
 
 	return resolve(event);

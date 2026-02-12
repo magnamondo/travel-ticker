@@ -274,6 +274,7 @@
 		cursor: pointer;
 		transition: background-color 0.15s;
 		line-height: 1;
+		user-select: none;
 	}
 
 	.emoji-option:hover {

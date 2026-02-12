@@ -32,8 +32,9 @@ FROM node:24-alpine AS server
 
 WORKDIR /app
 
-# Install ImageMagick with HEIF support for image processing (HEIC conversion, thumbnails, resizing)
-RUN apk add --no-cache imagemagick libheif
+# Install ImageMagick with HEIF/JPEG support for image processing (HEIC conversion, thumbnails, resizing)
+# imagemagick-jpeg provides the JPEG delegate for reading/writing JPEG files
+RUN apk add --no-cache imagemagick imagemagick-jpeg libheif
 
 # Copy only what's needed for production:
 # - build/         → SvelteKit server + pre-compiled worker
@@ -88,9 +89,10 @@ WORKDIR /app
 RUN apk add --no-cache ffmpeg imagemagick libheif
 
 # Copy only what's needed:
-# - Pre-compiled worker from builder
+# - Pre-compiled workers from builder
 # - Package files for native deps (better-sqlite3)
 COPY --from=builder /app/build/worker.mjs build/
+COPY --from=builder /app/build/notification-worker.mjs build/
 COPY --from=builder /app/package*.json ./
 
 # Install only production dependencies (no tsx/esbuild needed)

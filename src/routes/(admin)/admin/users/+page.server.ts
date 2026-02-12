@@ -6,9 +6,10 @@ import { fail } from '@sveltejs/kit';
 import { hashPassword } from '$lib/server/password';
 import { randomUUID } from 'crypto';
 import { ROLES, type Role } from '$lib/roles';
+import { DEFAULT_NOTIFICATION_PREFERENCES, type NotificationPreferences } from '$lib/notification-types';
 
 export const load: PageServerLoad = async () => {
-	const users = await db
+	const rawUsers = await db
 		.select({
 			id: user.id,
 			email: user.email,
@@ -16,15 +17,29 @@ export const load: PageServerLoad = async () => {
 			emailVerified: user.emailVerified,
 			createdAt: user.createdAt,
 			profile: {
+				id: userProfile.id,
 				title: userProfile.title,
 				firstName: userProfile.firstName,
 				lastName: userProfile.lastName,
-				phoneNumber: userProfile.phoneNumber
+				phoneNumber: userProfile.phoneNumber,
+				notificationPreferences: userProfile.notificationPreferences
 			}
 		})
 		.from(user)
 		.leftJoin(userProfile, eq(user.id, userProfile.userId))
 		.orderBy(desc(user.createdAt));
+
+	// Parse notification preferences - drizzle doesn't properly parse JSON in nested LEFT JOIN selects
+	// Also handle case where profile object exists but all fields are null (no actual profile record)
+	const users = rawUsers.map(u => ({
+		...u,
+		profile: u.profile?.id ? {
+			...u.profile,
+			notificationPreferences: typeof u.profile.notificationPreferences === 'string'
+				? JSON.parse(u.profile.notificationPreferences) as NotificationPreferences
+				: u.profile.notificationPreferences
+		} : null
+	}));
 
 	// Calculate stats
 	const stats = {
@@ -84,14 +99,14 @@ export const actions: Actions = {
 			createdAt: new Date()
 		});
 
-		if (firstName || lastName) {
-			await db.insert(userProfile).values({
-				id: randomUUID(),
-				userId,
-				firstName: firstName || null,
-				lastName: lastName || null
-			});
-		}
+		// Always create a profile with default notification preferences
+		await db.insert(userProfile).values({
+			id: randomUUID(),
+			userId,
+			firstName: firstName || null,
+			lastName: lastName || null,
+			notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES
+		});
 
 		return { success: true, message: 'User created successfully' };
 	},
@@ -104,6 +119,7 @@ export const actions: Actions = {
 		const lastName = formData.get('lastName') as string;
 		const role = formData.get('role') as Role;
 		const emailVerified = formData.get('emailVerified') === 'on';
+		const newMilestonesNotification = formData.get('newMilestonesNotification') === 'on';
 
 		if (!userId || !email) {
 			return fail(400, { error: 'User ID and email are required' });
@@ -125,18 +141,28 @@ export const actions: Actions = {
 			.set({ email, roles, emailVerified })
 			.where(eq(user.id, userId));
 
+		// Build notification preferences
+		const notificationPreferences: NotificationPreferences = {
+			new_milestones: newMilestonesNotification
+		};
+
 		// Update or create profile
 		const existingProfile = await db.select().from(userProfile).where(eq(userProfile.userId, userId));
 		if (existingProfile.length > 0) {
 			await db.update(userProfile)
-				.set({ firstName: firstName || null, lastName: lastName || null })
+				.set({ 
+					firstName: firstName || null, 
+					lastName: lastName || null,
+					notificationPreferences
+				})
 				.where(eq(userProfile.userId, userId));
-		} else if (firstName || lastName) {
+		} else {
 			await db.insert(userProfile).values({
 				id: randomUUID(),
 				userId,
 				firstName: firstName || null,
-				lastName: lastName || null
+				lastName: lastName || null,
+				notificationPreferences
 			});
 		}
 
@@ -193,6 +219,16 @@ export const actions: Actions = {
 		await db.update(user)
 			.set({ emailVerified: true, verificationToken: null })
 			.where(eq(user.id, userId));
+
+		// Create profile with default notification preferences if it doesn't exist
+		const existingProfile = await db.select().from(userProfile).where(eq(userProfile.userId, userId));
+		if (existingProfile.length === 0) {
+			await db.insert(userProfile).values({
+				id: randomUUID(),
+				userId,
+				notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES
+			});
+		}
 
 		return { success: true, message: 'Email verified' };
 	},

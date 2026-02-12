@@ -215,7 +215,7 @@ function needsTranscoding(mimeType: string, filename: string): boolean {
  */
 async function makeProgressiveJpeg(inputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const proc = spawn('convert', [
+		const proc = spawn('magick', [
 			inputPath,
 			'-interlace', 'Plane',
 			inputPath

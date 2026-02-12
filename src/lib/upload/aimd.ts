@@ -135,7 +135,6 @@ export class AIMDController {
 				this.config.maxConcurrency
 			);
 			this.state.consecutiveSuccesses = 0; // Reset counter after increase
-			console.log(`[AIMD] Increased concurrency to ${this.state.currentConcurrency}`);
 		}
 
 		return this.state.currentConcurrency;
@@ -158,7 +157,6 @@ export class AIMDController {
 		);
 
 		if (newConcurrency < this.state.currentConcurrency) {
-			console.log(`[AIMD] Decreased concurrency from ${this.state.currentConcurrency} to ${newConcurrency} due to ${reason}`);
 			this.state.currentConcurrency = newConcurrency;
 		}
 
