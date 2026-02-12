@@ -51,11 +51,11 @@ export function isHeicFile(mimeType: string, filename: string): boolean {
 }
 
 /**
- * Check if ImageMagick (convert) is available on the system
+ * Check if ImageMagick (magick) is available on the system
  */
 export async function isImageMagickAvailable(): Promise<boolean> {
 	return new Promise((resolve) => {
-		const proc = spawn('convert', ['-version']);
+		const proc = spawn('magick', ['-version']);
 		proc.on('error', () => resolve(false));
 		proc.on('close', (code) => resolve(code === 0));
 	});
@@ -129,7 +129,7 @@ export async function convertHeicToJpeg(inputPath: string): Promise<ImageConvers
  */
 function convertWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const proc = spawn('convert', [
+		const proc = spawn('magick', [
 			inputPath,
 			'-auto-orient',  // Respect EXIF orientation
 			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
@@ -255,7 +255,7 @@ function generateThumbnailWithImageMagick(inputPath: string, outputPath: string)
 		// -strip explicitly removes all metadata (EXIF, GPS, etc.) for privacy
 		// Size^ means fill the box, then we crop to exact size
 		// -interlace Plane creates progressive JPEG for better perceived loading
-		const proc = spawn('convert', [
+		const proc = spawn('magick', [
 			inputPath,
 			'-auto-orient',
 			'-strip',  // Remove all metadata for privacy
@@ -339,7 +339,7 @@ export async function getImageDimensions(inputPath: string): Promise<ImageDimens
 
 function getImageDimensionsWithIdentify(inputPath: string): Promise<ImageDimensions | null> {
 	return new Promise((resolve) => {
-		const proc = spawn('identify', ['-format', '%wx%h', inputPath]);
+		const proc = spawn('magick', ['identify', '-format', '%wx%h', inputPath]);
 
 		let output = '';
 		proc.stdout.on('data', (data) => {
@@ -456,7 +456,7 @@ export async function stripImageMetadata(inputPath: string): Promise<ImageConver
 
 function stripWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const proc = spawn('convert', [
+		const proc = spawn('magick', [
 			inputPath,
 			'-auto-orient',  // Apply orientation before stripping
 			'-strip',  // Remove all metadata
@@ -588,7 +588,7 @@ function getMimeTypeFromExtension(ext: string): string {
 
 function resizeWithImageMagick(inputPath: string, outputPath: string, maxDimension: number): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const proc = spawn('convert', [
+		const proc = spawn('magick', [
 			inputPath,
 			'-auto-orient',
 			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy

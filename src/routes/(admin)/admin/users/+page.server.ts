@@ -6,10 +6,10 @@ import { fail } from '@sveltejs/kit';
 import { hashPassword } from '$lib/server/password';
 import { randomUUID } from 'crypto';
 import { ROLES, type Role } from '$lib/roles';
-import type { NotificationPreferences } from '$lib/notification-types';
+import { DEFAULT_NOTIFICATION_PREFERENCES, type NotificationPreferences } from '$lib/notification-types';
 
 export const load: PageServerLoad = async () => {
-	const users = await db
+	const rawUsers = await db
 		.select({
 			id: user.id,
 			email: user.email,
@@ -17,6 +17,7 @@ export const load: PageServerLoad = async () => {
 			emailVerified: user.emailVerified,
 			createdAt: user.createdAt,
 			profile: {
+				id: userProfile.id,
 				title: userProfile.title,
 				firstName: userProfile.firstName,
 				lastName: userProfile.lastName,
@@ -27,6 +28,18 @@ export const load: PageServerLoad = async () => {
 		.from(user)
 		.leftJoin(userProfile, eq(user.id, userProfile.userId))
 		.orderBy(desc(user.createdAt));
+
+	// Parse notification preferences - drizzle doesn't properly parse JSON in nested LEFT JOIN selects
+	// Also handle case where profile object exists but all fields are null (no actual profile record)
+	const users = rawUsers.map(u => ({
+		...u,
+		profile: u.profile?.id ? {
+			...u.profile,
+			notificationPreferences: typeof u.profile.notificationPreferences === 'string'
+				? JSON.parse(u.profile.notificationPreferences) as NotificationPreferences
+				: u.profile.notificationPreferences
+		} : null
+	}));
 
 	// Calculate stats
 	const stats = {
@@ -86,14 +99,14 @@ export const actions: Actions = {
 			createdAt: new Date()
 		});
 
-		if (firstName || lastName) {
-			await db.insert(userProfile).values({
-				id: randomUUID(),
-				userId,
-				firstName: firstName || null,
-				lastName: lastName || null
-			});
-		}
+		// Always create a profile with default notification preferences
+		await db.insert(userProfile).values({
+			id: randomUUID(),
+			userId,
+			firstName: firstName || null,
+			lastName: lastName || null,
+			notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES
+		});
 
 		return { success: true, message: 'User created successfully' };
 	},
@@ -206,6 +219,16 @@ export const actions: Actions = {
 		await db.update(user)
 			.set({ emailVerified: true, verificationToken: null })
 			.where(eq(user.id, userId));
+
+		// Create profile with default notification preferences if it doesn't exist
+		const existingProfile = await db.select().from(userProfile).where(eq(userProfile.userId, userId));
+		if (existingProfile.length === 0) {
+			await db.insert(userProfile).values({
+				id: randomUUID(),
+				userId,
+				notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES
+			});
+		}
 
 		return { success: true, message: 'Email verified' };
 	},

@@ -345,7 +345,7 @@
 					</div>
 					<div class="form-group">
 						<label class="checkbox-label">
-							<input type="checkbox" name="newMilestonesNotification" checked={editUser.profile?.notificationPreferences?.new_milestones === true} />
+							<input type="checkbox" name="newMilestonesNotification" checked={editUser.profile?.notificationPreferences?.new_milestones !== false} />
 							<span>Receive milestone notifications</span>
 						</label>
 					</div>
