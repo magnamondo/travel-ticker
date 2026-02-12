@@ -1,7 +1,7 @@
 import type { PageServerLoad, Actions } from './$types';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { milestone, segment, milestoneMedia, comment, reaction, userProfile } from '$lib/server/db/schema';
+import { milestone, segment, milestoneMedia, comment, reaction, userProfile, user } from '$lib/server/db/schema';
 import { eq, and, gte } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { isAdmin, canComment } from '$lib/roles';
@@ -47,11 +47,39 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		.where(eq(milestoneMedia.milestoneId, params.id))
 		.orderBy(milestoneMedia.sortOrder);
 
-	// Fetch comments for milestone
-	const comments = await db
-		.select()
+	// Fetch comments for milestone with user profile info for dynamic display names
+	const commentsWithProfiles = await db
+		.select({
+			id: comment.id,
+			milestoneId: comment.milestoneId,
+			userId: comment.userId,
+			authorName: comment.authorName,
+			content: comment.content,
+			createdAt: comment.createdAt,
+			updatedAt: comment.updatedAt,
+			isHidden: comment.isHidden,
+			profileFirstName: userProfile.firstName,
+			profileLastName: userProfile.lastName,
+			userEmail: user.email
+		})
 		.from(comment)
+		.leftJoin(user, eq(comment.userId, user.id))
+		.leftJoin(userProfile, eq(comment.userId, userProfile.userId))
 		.where(eq(comment.milestoneId, params.id));
+
+	// Calculate display name: profile name > email > stored authorName (fallback for deleted users)
+	const comments = commentsWithProfiles.map(c => ({
+		id: c.id,
+		milestoneId: c.milestoneId,
+		userId: c.userId,
+		authorName: c.profileFirstName
+			? (c.profileLastName ? `${c.profileFirstName} ${c.profileLastName}` : c.profileFirstName)
+			: (c.userEmail ?? c.authorName),
+		content: c.content,
+		createdAt: c.createdAt,
+		updatedAt: c.updatedAt,
+		isHidden: c.isHidden
+	}));
 
 	// Fetch reactions for milestone
 	const milestoneReactions = await db
