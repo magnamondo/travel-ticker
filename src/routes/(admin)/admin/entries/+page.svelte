@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import ChunkedUploader from '$lib/components/ChunkedUploader.svelte';
+	import MediaBrowser from '$lib/components/MediaBrowser.svelte';
 	import VideoThumbnail from '$lib/components/VideoThumbnail.svelte';
 	import type { UploadResult } from '$lib/upload';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -39,6 +40,7 @@
 	let editingSegmentId = $state<string | null>(null);
 	let showAddMediaFor = $state<string | null>(null);
 	let uploadModeFor = $state<string | null>(null);
+	let showMediaBrowserFor = $state<string | null>(null);
 	let uploadingMedia = $state(false);
 	let hasActiveUploads = $state(false); // Track if ChunkedUploader has uploads in progress
 	let uploadSuccess = $state<string | null>(null);
@@ -238,6 +240,45 @@
 		if (results.length > 0) {
 			uploadSuccess = `${results.length} file${results.length > 1 ? 's' : ''} uploaded!`;
 			setTimeout(() => { uploadSuccess = null; }, 3000);
+		}
+	}
+	
+	type BrowsedMedia = {
+		id: string;
+		milestoneId: string;
+		type: 'image' | 'video';
+		url: string;
+		thumbnailUrl: string | null;
+		caption: string | null;
+		duration: number | null;
+		createdAt: Date;
+		milestoneTitle: string | null;
+	};
+
+	async function handleMediaBrowserSelect(milestoneId: string, media: BrowsedMedia) {
+		// Add the selected existing media to this milestone
+		const formData = new FormData();
+		formData.append('milestoneId', milestoneId);
+		formData.append('type', media.type);
+		formData.append('url', media.url);
+		formData.append('thumbnailUrl', media.thumbnailUrl || '');
+		formData.append('caption', media.caption || '');
+		
+		try {
+			const response = await fetch('?/addMedia', {
+				method: 'POST',
+				body: formData
+			});
+			
+			if (response.ok) {
+				await invalidateAll();
+				toasts.success('Media added!');
+			} else {
+				toasts.error('Failed to add media');
+			}
+		} catch (err) {
+			console.error('Failed to add media:', err);
+			toasts.error('Failed to add media');
 		}
 	}
 	
@@ -841,10 +882,22 @@
 												onUploadComplete={(result) => handleMilestoneUpload(milestone.id, result)}
 												onAllUploadsComplete={(results) => handleAllUploadsComplete(milestone.id, results)}
 											/>
-											<button type="button" class="btn-small-secondary" onclick={() => {
-												uploadModeFor = null;
-											}}>Done</button>
+											<div class="uploader-actions">
+												<button type="button" class="btn-small-secondary btn-browse" onclick={() => {
+													showMediaBrowserFor = milestone.id;
+												}}>
+													🖼️ Browse existing
+												</button>
+												<button type="button" class="btn-small-secondary" onclick={() => {
+													uploadModeFor = null;
+												}}>Done</button>
+											</div>
 										</div>
+										<MediaBrowser
+											open={showMediaBrowserFor === milestone.id}
+											onselect={(media) => handleMediaBrowserSelect(milestone.id, media)}
+											onclose={() => { showMediaBrowserFor = null; }}
+										/>
 									{:else}
 										<button class="add-media-btn" onclick={() => {
 											uploadModeFor = milestone.id;
@@ -1760,6 +1813,16 @@
 
 	.uploader-section .btn-small-secondary {
 		margin-top: 0.75rem;
+	}
+
+	.uploader-actions {
+		display: flex;
+		gap: 0.5rem;
+		margin-top: 0.75rem;
+	}
+
+	.uploader-actions .btn-browse {
+		flex: 1;
 	}
 	
 	.upload-success-msg {
