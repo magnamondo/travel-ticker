@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { toasts } from '$lib/stores/toast.svelte';
+	import { invalidateAll } from '$app/navigation';
 
 	let { data } = $props();
 
@@ -42,11 +43,7 @@
 			});
 			if (res.ok) {
 				toasts.success(currentlyHidden ? 'Comment unhidden' : 'Comment hidden');
-				// Update local state
-				const comment = data.comments.find(c => c.id === commentId);
-				if (comment) {
-					comment.isHidden = !currentlyHidden;
-				}
+				await invalidateAll();
 			} else {
 				const err = await res.json();
 				toasts.error(err.message || 'Failed to update comment');
@@ -65,8 +62,7 @@
 			const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
 			if (res.ok) {
 				toasts.success('Comment deleted');
-				// Remove from local data
-				data.comments = data.comments.filter(c => c.id !== commentId);
+				await invalidateAll();
 			} else {
 				const err = await res.json();
 				toasts.error(err.message || 'Failed to delete comment');

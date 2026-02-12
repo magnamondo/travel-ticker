@@ -102,7 +102,6 @@ export async function initializeUpload(
 			if (response.ok) {
 				const session = await response.json();
 				if (session.status !== 'completed') {
-					console.log('Resuming existing upload session:', existingSessionId);
 					return {
 						sessionId: session.sessionId,
 						chunkSize: session.chunkSize,
@@ -358,7 +357,6 @@ async function uploadChunkWithRetry(
 				const jitter = Math.random() * baseDelay * 0.3; // 30% jitter
 				const delay = Math.min(baseDelay + jitter, 30000); // Cap at 30 seconds
 				
-				console.log(`Chunk ${chunkIndex} ${errorType}, attempt ${attempt + 1}/${maxRetries}, retrying in ${Math.round(delay)}ms...`, lastError.message);
 				onRetry?.(attempt + 1, maxRetries, lastError);
 				
 				await new Promise(resolve => setTimeout(resolve, delay));

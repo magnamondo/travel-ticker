@@ -302,7 +302,6 @@ async function processNewMilestonesNotification(
 	// Get all subscribers
 	const allSubscribers = await getSubscribers('new_milestones');
 	if (allSubscribers.length === 0) {
-		console.log(`  ℹ️  No subscribers for new_milestones`);
 		// Mark all queue items as sent
 		for (const item of queueItems) {
 			await db
@@ -329,7 +328,6 @@ async function processNewMilestonesNotification(
 		);
 
 	if (newMilestones.length === 0) {
-		console.log(`  ℹ️  No new milestones to notify about`);
 		// Mark all queue items as sent
 		for (const item of queueItems) {
 			await db
@@ -436,7 +434,6 @@ async function processNewMilestonesNotification(
 	}
 
 	if (emails.length === 0) {
-		console.log(`  ℹ️  No subscribers can access any of the new milestones`);
 		// Still mark milestones as notified (they're group-restricted)
 		const now = new Date();
 		for (const m of newMilestones) {
@@ -454,11 +451,8 @@ async function processNewMilestonesNotification(
 		return;
 	}
 
-	console.log(`  📧 Sending ${emails.length} personalized email(s) for ${newMilestones.length} milestone(s)`);
-
 	// Send batch
 	const { sent, failed } = await sendEmailBatch(emails);
-	console.log(`  ✅ new_milestones: sent ${sent}, failed ${failed}`);
 
 	const now = new Date();
 
@@ -470,7 +464,6 @@ async function processNewMilestonesNotification(
 				.set({ notifiedAt: now })
 				.where(eq(milestone.id, m.id));
 		}
-		console.log(`  📝 Marked ${newMilestones.length} milestone(s) as notified`);
 	}
 
 	// Mark queue items as sent/failed
@@ -508,8 +501,6 @@ async function processQueue(): Promise<void> {
 			return;
 		}
 
-		console.log(`📬 Processing ${pendingItems.length} notification(s)...`);
-
 		// Group by typeId for efficient subscriber lookup
 		const byType = new Map<string, typeof pendingItems>();
 		for (const item of pendingItems) {
@@ -541,7 +532,6 @@ async function processQueue(): Promise<void> {
 			// Get subscribers for this notification type
 			const subscribers = await getSubscribers(typeId);
 			if (subscribers.length === 0) {
-				console.log(`  ℹ️  No subscribers for type: ${typeId}`);
 				// Mark as sent anyway (no one to notify)
 				for (const item of items) {
 					await db
@@ -594,8 +584,6 @@ async function processQueue(): Promise<void> {
 
 				// Send batch
 				const { sent, failed } = await sendEmailBatch(emails);
-
-				console.log(`  ✅ ${item.groupKey}: sent ${sent}, failed ${failed}`);
 
 				await db
 					.update(notificationQueue)

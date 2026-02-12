@@ -173,8 +173,6 @@ export const actions: Actions = {
 			.from(segment)
 			.where(eq(segment.id, segmentId));
 
-		console.log('📧 Queueing notification for milestone:', milestoneId, title);
-		
 		queueNotification(
 			'new_milestones',
 			`milestone:${milestoneId}`,
@@ -183,8 +181,7 @@ export const actions: Actions = {
 				milestoneTitle: title,
 				segmentName: segmentData?.name ?? 'Updates'
 			}
-		).then(() => console.log('✅ Notification queued successfully'))
-		.catch(err => console.error('❌ Failed to queue milestone notification:', err));
+		).catch(err => console.error('❌ Failed to queue milestone notification:', err));
 
 		return { success: true, message: 'Entry added!' };
 	},
@@ -259,15 +256,12 @@ export const actions: Actions = {
 
 		// Queue notification if this is the first time publishing
 		if (isFirstPublish) {
-			console.log('📧 Queueing/extending new_milestones notification for:', milestoneId);
-			
 			// Use shared groupKey - debounces multiple publishes into one notification
 			queueNotification(
 				'new_milestones',
 				'new_milestones', // Shared key for all new milestone batches
 				{ triggered: new Date().toISOString() } // Worker will query fresh data
-			).then(() => console.log('✅ Notification queued/extended successfully'))
-			.catch(err => console.error('❌ Failed to queue milestone notification:', err));
+			).catch(err => console.error('❌ Failed to queue milestone notification:', err));
 		}
 
 		// Note: Individual unpublish doesn't cancel the batch notification

@@ -74,7 +74,6 @@ export async function queueNotification<T>(
 			})
 			.where(eq(notificationQueue.id, existing.id));
 		
-		console.log(`📧 Extended notification ${existing.id} (#${newExtensionCount}), send after ${sendAfter.toISOString()} (${Math.round(delayMs / 60000)}min)`);
 		return existing.id;
 	}
 
@@ -93,7 +92,6 @@ export async function queueNotification<T>(
 		createdAt: now
 	});
 
-	console.log(`📧 Created new notification ${id}, send after ${sendAfter.toISOString()}`);
 	return id;
 }
 

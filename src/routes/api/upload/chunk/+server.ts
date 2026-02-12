@@ -9,6 +9,7 @@ import { existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { needsTranscoding, queueVideoTranscode } from '$lib/server/video';
 import { isHeicFile, convertHeicToJpeg, isImageFile, generateImageThumbnail, resizeImageIfNeeded } from '$lib/server/image';
+import { isAdmin } from '$lib/roles';
 
 // Use data directory for persistence (works with Docker volume)
 const DATA_DIR = process.env.DATA_DIR || 'data';
@@ -55,7 +56,15 @@ function isConnectionDropError(err: unknown): boolean {
 }
 
 // POST: Upload a single chunk
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	// Auth check - only admins can upload
+	if (!locals.user) {
+		throw error(401, 'Not authenticated');
+	}
+	if (!isAdmin(locals.user.roles)) {
+		throw error(403, 'Only administrators can upload files');
+	}
+
 	const clientIp = getClientIp(request);
 	
 	// Parse form data with connection drop detection

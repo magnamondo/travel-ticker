@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Reactions from '$lib/components/Reactions.svelte';
 	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
@@ -416,7 +417,7 @@
 					class="comment-form"
 				>
 					<div class="posting-as">
-						Posting as <strong>{data.user.displayName}</strong>
+						Posting as <strong>{data.userDisplayName}</strong>
 					</div>
 					<div class="form-row">
 						<label for="content" class="visually-hidden">Your comment</label>

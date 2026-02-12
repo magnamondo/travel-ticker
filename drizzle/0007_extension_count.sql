@@ -1,0 +1,1 @@
+ALTER TABLE `notification_queue` ADD `extension_count` integer DEFAULT 0 NOT NULL;

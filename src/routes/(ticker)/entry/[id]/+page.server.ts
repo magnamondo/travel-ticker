@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { milestone, segment, milestoneMedia, comment, reaction, userProfile } from '$lib/server/db/schema';
 import { eq, and, gte } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { canComment, canReact, isAdmin } from '$lib/roles';
+import { isAdmin, canComment } from '$lib/roles';
 import { canUserAccessMilestone } from '$lib/server/groups';
 
 export const load: PageServerLoad = async ({ params, locals, url }) => {
@@ -167,17 +167,8 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 				isHidden: c.isHidden,
 				reactions: commentReactionsByComment[c.id] || {}
 			})),
-		user: locals.user ? {
-			id: locals.user.id,
-			email: locals.user.email,
-			displayName: userDisplayName,
-			canComment: canComment(locals.user.roles),
-			canReact: canReact(locals.user.roles),
-			isAdmin: isAdmin(locals.user.roles)
-		} : null
-	};
+		userDisplayName	};
 };
-
 export const actions: Actions = {
 	default: async ({ request, params, locals }) => {
 		if (!locals.user) {
