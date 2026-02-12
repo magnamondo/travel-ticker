@@ -364,7 +364,7 @@ async function transcodeVideo(inputPath: string, outputPath: string): Promise<bo
 			'-profile:v', 'main',         // Wide compatibility (iPhone 6+, most browsers)
 			'-level', '4.0',              // Supports 1080p @ 30fps
 			'-preset', 'medium',
-			'-crf', '23',
+			'-crf', '26',                 // Web-optimized (was 23, ~40% smaller files)
 			'-pix_fmt', 'yuv420p',        // Required for browser playback
 			'-g', '48',                   // Keyframe every ~2s (better seeking)
 			'-c:a', 'aac',
@@ -405,7 +405,7 @@ async function resizeVideoIfNeeded(inputPath: string, dimensions: VideoDimension
 			'-profile:v', 'main',         // Wide compatibility (iPhone 6+, most browsers)
 			'-level', '4.0',              // Supports 1080p @ 30fps
 			'-preset', 'medium',
-			'-crf', '23',
+			'-crf', '26',                 // Web-optimized (was 23, ~40% smaller files)
 			'-pix_fmt', 'yuv420p',        // Required for browser playback
 			'-g', '48',                   // Keyframe every ~2s (better seeking)
 			'-c:a', 'aac',
