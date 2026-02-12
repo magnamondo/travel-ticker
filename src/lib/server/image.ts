@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { unlink, rename, stat } from 'fs/promises';
+import { unlink, rename } from 'fs/promises';
 import { join, dirname, basename, extname } from 'path';
 
 // Maximum image dimension (longest side)
@@ -39,6 +39,17 @@ const HEIC_MIME_TYPES = [
 // HEIC file extensions
 const HEIC_EXTENSIONS = ['.heic', '.heif'];
 
+// Image MIME types that support thumbnail generation
+const IMAGE_MIME_TYPES = [
+	'image/jpeg',
+	'image/jpg',
+	'image/png',
+	'image/gif',
+	'image/webp',
+	'image/heic',
+	'image/heif'
+];
+
 /**
  * Check if a file is a HEIC/HEIF image that needs conversion
  */
@@ -51,29 +62,37 @@ export function isHeicFile(mimeType: string, filename: string): boolean {
 }
 
 /**
- * Check if ImageMagick (magick) is available on the system
+ * Check if a file is an image that can have a thumbnail generated
  */
-export async function isImageMagickAvailable(): Promise<boolean> {
-	return new Promise((resolve) => {
-		const proc = spawn('magick', ['-version']);
-		proc.on('error', () => resolve(false));
-		proc.on('close', (code) => resolve(code === 0));
+export function isImageFile(mimeType: string): boolean {
+	return IMAGE_MIME_TYPES.includes(mimeType.toLowerCase());
+}
+
+/**
+ * Helper to run ImageMagick command and return a promise
+ */
+function runMagick(args: string[]): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('magick', args);
+
+		let stderr = '';
+		proc.stderr.on('data', (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on('error', (err) => reject(err));
+		proc.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else {
+				reject(new Error(`ImageMagick failed: ${stderr}`));
+			}
+		});
 	});
 }
 
 /**
- * Check if ffmpeg is available (can also convert HEIC)
- */
-export async function isFFmpegAvailable(): Promise<boolean> {
-	return new Promise((resolve) => {
-		const proc = spawn('ffmpeg', ['-version']);
-		proc.on('error', () => resolve(false));
-		proc.on('close', (code) => resolve(code === 0));
-	});
-}
-
-/**
- * Convert HEIC image to JPEG using ImageMagick or ffmpeg
+ * Convert HEIC image to JPEG using ImageMagick
  * Returns the path to the converted file
  */
 export async function convertHeicToJpeg(inputPath: string): Promise<ImageConversionResult> {
@@ -85,23 +104,15 @@ export async function convertHeicToJpeg(inputPath: string): Promise<ImageConvers
 	const base = basename(inputPath, extname(inputPath));
 	const outputPath = join(dir, `${base}.jpg`);
 
-	// Try ImageMagick first (better quality), then ffmpeg as fallback
-	const imageMagickAvailable = await isImageMagickAvailable();
-	const ffmpegAvailable = await isFFmpegAvailable();
-
-	if (!imageMagickAvailable && !ffmpegAvailable) {
-		return { 
-			success: false, 
-			error: 'Neither ImageMagick nor ffmpeg available for HEIC conversion' 
-		};
-	}
-
 	try {
-		if (imageMagickAvailable) {
-			await convertWithImageMagick(inputPath, outputPath);
-		} else {
-			await convertWithFFmpeg(inputPath, outputPath);
-		}
+		await runMagick([
+			inputPath,
+			'-auto-orient',
+			'-strip',
+			'-interlace', 'Plane',
+			'-quality', '90',
+			outputPath
+		]);
 
 		// Remove original HEIC file
 		try {
@@ -125,84 +136,7 @@ export async function convertHeicToJpeg(inputPath: string): Promise<ImageConvers
 }
 
 /**
- * Convert using ImageMagick's convert command
- */
-function convertWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn('magick', [
-			inputPath,
-			'-auto-orient',  // Respect EXIF orientation
-			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
-			'-interlace', 'Plane',  // Progressive JPEG
-			'-quality', '90',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ImageMagick convert failed: ${stderr}`));
-			}
-		});
-	});
-}
-
-/**
- * Convert using ffmpeg as fallback
- */
-function convertWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn('ffmpeg', [
-			'-y',  // Overwrite output
-			'-i', inputPath,
-			'-map_metadata', '-1',  // Remove all metadata for privacy
-			'-q:v', '2',  // High quality JPEG
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ffmpeg conversion failed: ${stderr}`));
-			}
-		});
-	});
-}
-
-// Image MIME types that support thumbnail generation
-const IMAGE_MIME_TYPES = [
-	'image/jpeg',
-	'image/jpg',
-	'image/png',
-	'image/gif',
-	'image/webp',
-	'image/heic',
-	'image/heif'
-];
-
-/**
- * Check if a file is an image that can have a thumbnail generated
- */
-export function isImageFile(mimeType: string): boolean {
-	return IMAGE_MIME_TYPES.includes(mimeType.toLowerCase());
-}
-
-/**
- * Generate a thumbnail for an image file using ImageMagick or ffmpeg
+ * Generate a thumbnail for an image file using ImageMagick
  * Creates a 600x600 thumbnail (center cropped) for the grid layout
  */
 export async function generateImageThumbnail(
@@ -213,23 +147,22 @@ export async function generateImageThumbnail(
 		return { success: false, error: 'Input file not found' };
 	}
 
-	const imageMagickAvailable = await isImageMagickAvailable();
-	const ffmpegAvailable = await isFFmpegAvailable();
-
-	if (!imageMagickAvailable && !ffmpegAvailable) {
-		return { success: false, error: 'Neither ImageMagick nor ffmpeg available for thumbnail generation' };
-	}
-
 	const dir = dirname(inputPath);
 	const base = basename(inputPath, extname(inputPath));
 	const thumbPath = outputPath || join(dir, `${base}_thumb.jpg`);
 
 	try {
-		if (imageMagickAvailable) {
-			await generateThumbnailWithImageMagick(inputPath, thumbPath);
-		} else {
-			await generateThumbnailWithFFmpeg(inputPath, thumbPath);
-		}
+		await runMagick([
+			inputPath,
+			'-auto-orient',
+			'-strip',
+			'-thumbnail', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}^`,
+			'-gravity', 'center',
+			'-extent', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}`,
+			'-interlace', 'Plane',
+			'-quality', '85',
+			thumbPath
+		]);
 
 		return {
 			success: true,
@@ -246,98 +179,13 @@ export async function generateImageThumbnail(
 }
 
 /**
- * Generate thumbnail using ImageMagick
- */
-function generateThumbnailWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		// Use ImageMagick to create a thumbnail
-		// -thumbnail respects EXIF orientation and strips metadata for smaller files
-		// -strip explicitly removes all metadata (EXIF, GPS, etc.) for privacy
-		// Size^ means fill the box, then we crop to exact size
-		// -interlace Plane creates progressive JPEG for better perceived loading
-		const proc = spawn('magick', [
-			inputPath,
-			'-auto-orient',
-			'-strip',  // Remove all metadata for privacy
-			'-thumbnail', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}^`,
-			'-gravity', 'center',
-			'-extent', `${THUMBNAIL_SIZE}x${THUMBNAIL_SIZE}`,
-			'-interlace', 'Plane',
-			'-quality', '85',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ImageMagick thumbnail failed: ${stderr}`));
-			}
-		});
-	});
-}
-
-/**
- * Generate thumbnail using ffmpeg as fallback
- * Note: ffmpeg JPEG output doesn't support progressive encoding natively,
- * but ImageMagick (primary method) does. This is acceptable as a fallback.
- */
-function generateThumbnailWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		// Use ffmpeg to create a center-cropped thumbnail
-		const proc = spawn('ffmpeg', [
-			'-y',
-			'-i', inputPath,
-			'-vf', `scale=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}:force_original_aspect_ratio=increase,crop=${THUMBNAIL_SIZE}:${THUMBNAIL_SIZE}`,
-			'-frames:v', '1',
-			'-map_metadata', '-1',  // Remove all metadata for privacy
-			'-q:v', '2',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ffmpeg thumbnail failed: ${stderr}`));
-			}
-		});
-	});
-}
-
-/**
- * Get image dimensions using ImageMagick or ffprobe
+ * Get image dimensions using ImageMagick identify
  */
 export async function getImageDimensions(inputPath: string): Promise<ImageDimensions | null> {
 	if (!existsSync(inputPath)) {
 		return null;
 	}
 
-	const imageMagickAvailable = await isImageMagickAvailable();
-	const ffmpegAvailable = await isFFmpegAvailable();
-
-	if (imageMagickAvailable) {
-		return getImageDimensionsWithIdentify(inputPath);
-	} else if (ffmpegAvailable) {
-		return getImageDimensionsWithFFprobe(inputPath);
-	}
-
-	return null;
-}
-
-function getImageDimensionsWithIdentify(inputPath: string): Promise<ImageDimensions | null> {
 	return new Promise((resolve) => {
 		const proc = spawn('magick', ['identify', '-format', '%wx%h', inputPath]);
 
@@ -362,40 +210,8 @@ function getImageDimensionsWithIdentify(inputPath: string): Promise<ImageDimensi
 	});
 }
 
-function getImageDimensionsWithFFprobe(inputPath: string): Promise<ImageDimensions | null> {
-	return new Promise((resolve) => {
-		const proc = spawn('ffprobe', [
-			'-v', 'error',
-			'-select_streams', 'v:0',
-			'-show_entries', 'stream=width,height',
-			'-of', 'csv=s=x:p=0',
-			inputPath
-		]);
-
-		let output = '';
-		proc.stdout.on('data', (data) => {
-			output += data.toString();
-		});
-
-		proc.on('error', () => resolve(null));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				const match = output.trim().match(/^(\d+)x(\d+)$/);
-				if (match) {
-					resolve({ width: parseInt(match[1]), height: parseInt(match[2]) });
-				} else {
-					resolve(null);
-				}
-			} else {
-				resolve(null);
-			}
-		});
-	});
-}
-
 /**
  * Check if an image exceeds maximum dimensions and needs resizing
- * Uses a simple "longest side" approach - max 2048px on either dimension
  */
 function needsResize(dimensions: ImageDimensions): boolean {
 	return dimensions.width > MAX_IMAGE_DIMENSION || dimensions.height > MAX_IMAGE_DIMENSION;
@@ -410,24 +226,20 @@ export async function stripImageMetadata(inputPath: string): Promise<ImageConver
 		return { success: false, error: 'Input file not found' };
 	}
 
-	const imageMagickAvailable = await isImageMagickAvailable();
-	const ffmpegAvailable = await isFFmpegAvailable();
-
-	if (!imageMagickAvailable && !ffmpegAvailable) {
-		return { success: false, error: 'Neither ImageMagick nor ffmpeg available for metadata stripping' };
-	}
-
 	const dir = dirname(inputPath);
 	const ext = extname(inputPath);
 	const base = basename(inputPath, ext);
 	const tempPath = join(dir, `${base}_stripped${ext}`);
 
 	try {
-		if (imageMagickAvailable) {
-			await stripWithImageMagick(inputPath, tempPath);
-		} else {
-			await stripWithFFmpeg(inputPath, tempPath);
-		}
+		await runMagick([
+			inputPath,
+			'-auto-orient',
+			'-strip',
+			'-interlace', 'Plane',
+			'-quality', '90',
+			tempPath
+		]);
 
 		// Delete original and rename stripped file to take its place
 		await unlink(inputPath);
@@ -454,64 +266,10 @@ export async function stripImageMetadata(inputPath: string): Promise<ImageConver
 	}
 }
 
-function stripWithImageMagick(inputPath: string, outputPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn('magick', [
-			inputPath,
-			'-auto-orient',  // Apply orientation before stripping
-			'-strip',  // Remove all metadata
-			'-interlace', 'Plane',  // Progressive JPEG
-			'-quality', '90',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ImageMagick strip failed: ${stderr}`));
-			}
-		});
-	});
-}
-
-function stripWithFFmpeg(inputPath: string, outputPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn('ffmpeg', [
-			'-y',
-			'-i', inputPath,
-			'-map_metadata', '-1',  // Remove all metadata
-			'-q:v', '2',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ffmpeg strip failed: ${stderr}`));
-			}
-		});
-	});
-}
-
 /**
  * Resize an image if it exceeds maximum dimensions
  * Also strips all metadata for privacy
  * Deletes the original and replaces it with the processed version
- * Returns the path to the (possibly unchanged) image
  */
 export async function resizeImageIfNeeded(inputPath: string): Promise<ImageConversionResult> {
 	if (!existsSync(inputPath)) {
@@ -529,24 +287,21 @@ export async function resizeImageIfNeeded(inputPath: string): Promise<ImageConve
 		return stripImageMetadata(inputPath);
 	}
 
-	const imageMagickAvailable = await isImageMagickAvailable();
-	const ffmpegAvailable = await isFFmpegAvailable();
-
-	if (!imageMagickAvailable && !ffmpegAvailable) {
-		return { success: false, error: 'Neither ImageMagick nor ffmpeg available for resizing' };
-	}
-
 	const dir = dirname(inputPath);
 	const ext = extname(inputPath);
 	const base = basename(inputPath, ext);
 	const tempPath = join(dir, `${base}_resized${ext}`);
 
 	try {
-		if (imageMagickAvailable) {
-			await resizeWithImageMagick(inputPath, tempPath, MAX_IMAGE_DIMENSION);
-		} else {
-			await resizeWithFFmpeg(inputPath, tempPath, MAX_IMAGE_DIMENSION);
-		}
+		await runMagick([
+			inputPath,
+			'-auto-orient',
+			'-strip',
+			'-resize', `${MAX_IMAGE_DIMENSION}x${MAX_IMAGE_DIMENSION}>`,
+			'-interlace', 'Plane',
+			'-quality', '90',
+			tempPath
+		]);
 
 		// Delete original and rename resized file to take its place
 		await unlink(inputPath);
@@ -584,60 +339,4 @@ function getMimeTypeFromExtension(ext: string): string {
 		'.webp': 'image/webp'
 	};
 	return mimeTypes[ext.toLowerCase()] || 'image/jpeg';
-}
-
-function resizeWithImageMagick(inputPath: string, outputPath: string, maxDimension: number): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn('magick', [
-			inputPath,
-			'-auto-orient',
-			'-strip',  // Remove all metadata (EXIF, GPS, etc.) for privacy
-			'-resize', `${maxDimension}x${maxDimension}>`,  // Only shrink larger images, maintain aspect ratio
-			'-interlace', 'Plane',  // Progressive JPEG
-			'-quality', '90',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ImageMagick resize failed: ${stderr}`));
-			}
-		});
-	});
-}
-
-function resizeWithFFmpeg(inputPath: string, outputPath: string, maxDimension: number): Promise<void> {
-	return new Promise((resolve, reject) => {
-		// Scale to fit within maxDimension x maxDimension while maintaining aspect ratio
-		const proc = spawn('ffmpeg', [
-			'-y',
-			'-i', inputPath,
-			'-vf', `scale='if(gt(iw,ih),min(${maxDimension},iw),-2)':'if(gt(ih,iw),min(${maxDimension},ih),-2)'`,
-			'-map_metadata', '-1',  // Remove all metadata for privacy
-			'-q:v', '2',
-			outputPath
-		]);
-
-		let stderr = '';
-		proc.stderr.on('data', (data) => {
-			stderr += data.toString();
-		});
-
-		proc.on('error', (err) => reject(err));
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				reject(new Error(`ffmpeg resize failed: ${stderr}`));
-			}
-		});
-	});
 }

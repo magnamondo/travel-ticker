@@ -361,11 +361,16 @@ async function transcodeVideo(inputPath: string, outputPath: string): Promise<bo
 			'-i', inputPath,
 			'-vf', scaleFilter,
 			'-c:v', 'libx264',
+			'-profile:v', 'main',         // Wide compatibility (iPhone 6+, most browsers)
+			'-level', '4.0',              // Supports 1080p @ 30fps
 			'-preset', 'medium',
 			'-crf', '23',
+			'-pix_fmt', 'yuv420p',        // Required for browser playback
+			'-g', '48',                   // Keyframe every ~2s (better seeking)
 			'-c:a', 'aac',
 			'-b:a', '128k',
-			'-movflags', '+faststart',
+			'-ar', '48000',               // Standard sample rate
+			'-movflags', '+faststart',    // Enable streaming (moov at start)
 			'-y',
 			outputPath
 		]);
@@ -397,11 +402,16 @@ async function resizeVideoIfNeeded(inputPath: string, dimensions: VideoDimension
 			'-i', inputPath,
 			'-vf', scaleFilter,
 			'-c:v', 'libx264',
+			'-profile:v', 'main',         // Wide compatibility (iPhone 6+, most browsers)
+			'-level', '4.0',              // Supports 1080p @ 30fps
 			'-preset', 'medium',
 			'-crf', '23',
+			'-pix_fmt', 'yuv420p',        // Required for browser playback
+			'-g', '48',                   // Keyframe every ~2s (better seeking)
 			'-c:a', 'aac',
 			'-b:a', '128k',
-			'-movflags', '+faststart',
+			'-ar', '48000',               // Standard sample rate
+			'-movflags', '+faststart',    // Enable streaming (moov at start)
 			'-y',
 			tempPath
 		]);
@@ -434,14 +444,7 @@ async function processJob(job: typeof videoJob.$inferSelect): Promise<void> {
 	const jobId = job.id;
 	console.log(`🎬 Processing job ${jobId}: ${job.filename}`);
 
-	// Mark as processing
-	await db.update(videoJob)
-		.set({ 
-			status: 'processing', 
-			startedAt: new Date(),
-			updatedAt: new Date() 
-		})
-		.where(eq(videoJob.id, jobId));
+	// Job already marked as 'processing' by atomic claim in pollForJobs()
 
 	try {
 		if (!existsSync(job.inputPath)) {
@@ -597,9 +600,26 @@ async function pollForJobs(): Promise<void> {
 			.limit(1);
 
 		if (job) {
-			isProcessing = true;
-			await processJob(job);
-			isProcessing = false;
+			// Atomic claim: only proceed if we successfully update from pending/failed to processing
+			// This prevents race conditions if multiple workers try to claim the same job
+			const [claimed] = await db.update(videoJob)
+				.set({ 
+					status: 'processing', 
+					startedAt: new Date(),
+					updatedAt: new Date() 
+				})
+				.where(and(
+					eq(videoJob.id, job.id),
+					sql`${videoJob.status} IN ('pending', 'failed')`
+				))
+				.returning({ id: videoJob.id });
+
+			if (claimed) {
+				isProcessing = true;
+				await processJob(job);
+				isProcessing = false;
+			}
+			// If not claimed, another worker got it first - just continue polling
 		}
 	} catch (err) {
 		console.error('Error polling for jobs:', err);
