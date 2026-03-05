@@ -307,7 +307,9 @@
 										</a>
 									{:else if meta.type === 'icon'}
 										<div class="meta-item meta-icon-only">
-											<span class="meta-icon">{meta.icon || meta.value}</span>
+											{#if meta.value}
+												<span class="meta-icon">{meta.value}</span>
+											{/if}
 											{#if meta.label}
 												<span class="meta-label">{meta.label}</span>
 											{/if}
@@ -404,7 +406,7 @@
 							</div>
 							</a>
 							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-							<div class="card-reactions" class:hidden={swipedItemId === milestone.id}>
+							<div class="card-reactions" class:hidden={swipedItemId === milestone.id} ontouchstart={(e) => e.stopPropagation()}>
 								<Reactions
 									reactions={getReactions(milestone)}
 									targetType="milestone"
@@ -588,7 +590,7 @@
 	/* Both meta-left and meta-right use same positioning now */
 	.timeline-meta.meta-left,
 	.timeline-meta.meta-right {
-		right: 0;
+		right: 32px;
 		left: auto;
 		align-items: flex-start;
 		padding-left: 1rem;
@@ -904,6 +906,7 @@
 		margin-bottom: 1rem;
 		position: relative;
 		z-index: 2;
+		pointer-events: none;
 	}
 
 	.date-divider-text {
@@ -931,6 +934,47 @@
 		border-radius: var(--radius-full);
 		object-fit: cover;
 		background: var(--color-border);
+	}
+
+	/* Desktop: show meta items with individual enclosures at top-right */
+	@media (min-width: 769px) {
+		.timeline-meta {
+			position: absolute;
+			top: 0;
+			right: 2rem;
+			transform: translateY(-100%);
+			opacity: 1;
+			pointer-events: auto;
+			flex-direction: row;
+			justify-content: flex-end;
+			gap: 0.35rem;
+			padding: 0;
+			padding-bottom: 0.5rem;
+			margin: 0;
+			width: fit-content;
+		}
+
+		.timeline-meta.meta-left,
+		.timeline-meta.meta-right {
+			padding-left: 0;
+		}
+
+		.meta-item {
+			padding: 0.25rem 0.5rem;
+			background: var(--color-bg);
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-full);
+			transition: all 0.15s;
+		}
+
+		.meta-item:hover {
+			border-color: var(--color-primary);
+			background: var(--color-primary-light);
+		}
+
+		.swipe-indicator {
+			display: none;
+		}
 	}
 
 	/* Tablet: 769px - 1023px */

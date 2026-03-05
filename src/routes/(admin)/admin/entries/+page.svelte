@@ -172,8 +172,8 @@
 
 	function getMetaJson(milestoneId: string): string {
 		const meta = milestoneMetaMap.get(milestoneId) ?? [];
-		// Filter out empty entries
-		const filtered = meta.filter(m => m.value.trim() !== '');
+		// Filter out empty entries (need value or label)
+		const filtered = meta.filter(m => (m.value?.trim() ?? '') !== '' || (m.label?.trim() ?? '') !== '');
 		return JSON.stringify(filtered);
 	}
 
@@ -980,7 +980,7 @@
 												value={metaItem.label || ''}
 												oninput={(e) => updateMetaItem(milestone.id, i, 'label', e.currentTarget.value)}
 											/>
-											{#if metaItem.type !== 'coordinates'}
+											{#if metaItem.type === 'link'}
 												<input 
 													type="text" 
 													placeholder="Icon"
