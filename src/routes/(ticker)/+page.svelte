@@ -1136,6 +1136,7 @@
 			min-width: auto;
 			z-index: 0;
 			opacity: 0;
+			pointer-events: none;
 		}
 
 		.timeline-meta.meta-left,
@@ -1192,6 +1193,8 @@
 		.timeline-item.swiped .timeline-meta {
 			transform: translateY(-50%) translateX(0);
 			opacity: 1;
+			pointer-events: auto;
+			z-index: 3;
 		}
 
 		.timeline-item.swiped .timeline-content,
