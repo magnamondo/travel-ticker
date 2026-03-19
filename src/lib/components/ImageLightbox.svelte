@@ -30,6 +30,35 @@
 	);
 	let currentItem = $derived(mediaItems[activeIndex]);
 
+	// Image loading state
+	let loadedUrls = $state(new Set<string>());
+	let imageLoading = $derived(
+		currentItem?.type === 'image' && !loadedUrls.has(currentItem.url)
+	);
+
+	function handleImageLoad(url: string) {
+		loadedUrls.add(url);
+		// Trigger reactivity
+		loadedUrls = new Set(loadedUrls);
+	}
+
+	// Preload adjacent images
+	$effect(() => {
+		if (!open || mediaItems.length <= 1) return;
+		const indicesToPreload = [
+			(activeIndex + 1) % mediaItems.length,
+			(activeIndex - 1 + mediaItems.length) % mediaItems.length
+		];
+		for (const idx of indicesToPreload) {
+			const item = mediaItems[idx];
+			if (item?.type === 'image' && !loadedUrls.has(item.url)) {
+				const img = new Image();
+				img.onload = () => handleImageLoad(item.url);
+				img.src = item.url;
+			}
+		}
+	});
+
 	// Reset offset when currentIndex changes from parent
 	$effect(() => {
 		// When the parent changes currentIndex, reset our offset
@@ -69,14 +98,17 @@
 
 	function prev() {
 		indexOffset = indexOffset - 1;
+		resetZoom();
 	}
 
 	function next() {
 		indexOffset = indexOffset + 1;
+		resetZoom();
 	}
 
 	function goTo(index: number) {
 		indexOffset = index - currentIndex;
+		resetZoom();
 	}
 
 	function handleBackdropClick(e: MouseEvent) {
@@ -84,6 +116,28 @@
 			onclose?.();
 		}
 	}
+	
+	// Zoom state for mobile pinch-to-zoom
+	let zoomScale = $state(1);
+	let zoomX = $state(0);
+	let zoomY = $state(0);
+	let isZoomed = $derived(zoomScale > 1.05);
+	const MIN_ZOOM = 1;
+	const MAX_ZOOM = 4;
+	
+	// Reset zoom when changing images or closing
+	function resetZoom() {
+		zoomScale = 1;
+		zoomX = 0;
+		zoomY = 0;
+	}
+	
+	// Reset zoom when lightbox closes
+	$effect(() => {
+		if (!open) {
+			resetZoom();
+		}
+	});
 	
 	// Touch swipe handling for mobile
 	let touchStartX = $state(0);
@@ -97,10 +151,68 @@
 	const SWIPE_VELOCITY_THRESHOLD = 0.3; // minimum velocity for a quick swipe
 	let touchStartTime = $state(0);
 	
+	// Pinch-to-zoom state
+	let isPinching = $state(false);
+	let initialPinchDistance = $state(0);
+	let initialPinchScale = $state(1);
+	let pinchCenterX = $state(0);
+	let pinchCenterY = $state(0);
+	
+	// Pan state (when zoomed)
+	let isPanning = $state(false);
+	let panStartX = $state(0);
+	let panStartY = $state(0);
+	let initialZoomX = $state(0);
+	let initialZoomY = $state(0);
+	
+	// Double tap detection
+	let lastTapTime = $state(0);
+	let lastTapX = $state(0);
+	let lastTapY = $state(0);
+	const DOUBLE_TAP_DELAY = 300;
+	const DOUBLE_TAP_DISTANCE = 50;
+	
+	function getDistance(touch1: Touch, touch2: Touch): number {
+		const dx = touch1.clientX - touch2.clientX;
+		const dy = touch1.clientY - touch2.clientY;
+		return Math.sqrt(dx * dx + dy * dy);
+	}
+	
+	function getMidpoint(touch1: Touch, touch2: Touch): { x: number; y: number } {
+		return {
+			x: (touch1.clientX + touch2.clientX) / 2,
+			y: (touch1.clientY + touch2.clientY) / 2
+		};
+	}
+	
 	function handleTouchStart(e: TouchEvent) {
+		// Handle pinch start (two fingers)
+		if (e.touches.length === 2) {
+			isPinching = true;
+			isSwiping = false;
+			isPanning = false;
+			initialPinchDistance = getDistance(e.touches[0], e.touches[1]);
+			initialPinchScale = zoomScale;
+			const midpoint = getMidpoint(e.touches[0], e.touches[1]);
+			pinchCenterX = midpoint.x;
+			pinchCenterY = midpoint.y;
+			return;
+		}
+		
 		if (e.touches.length !== 1) return;
 		
 		const touch = e.touches[0];
+		
+		// If zoomed, start panning instead of swiping
+		if (isZoomed) {
+			isPanning = true;
+			panStartX = touch.clientX;
+			panStartY = touch.clientY;
+			initialZoomX = zoomX;
+			initialZoomY = zoomY;
+			return;
+		}
+		
 		touchStartX = touch.clientX;
 		touchStartY = touch.clientY;
 		touchDeltaX = 0;
@@ -111,7 +223,40 @@
 	}
 	
 	function handleTouchMove(e: TouchEvent) {
-		if (e.touches.length !== 1) return;
+		// Handle pinch zoom
+		if (e.touches.length === 2 && isPinching) {
+			e.preventDefault();
+			const currentDistance = getDistance(e.touches[0], e.touches[1]);
+			const scaleChange = currentDistance / initialPinchDistance;
+			let newScale = initialPinchScale * scaleChange;
+			
+			// Clamp scale
+			newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
+			zoomScale = newScale;
+			
+			// Adjust position to zoom toward pinch center
+			const midpoint = getMidpoint(e.touches[0], e.touches[1]);
+			if (newScale > 1) {
+				// Simple centering - keep the pinch center stable
+				const scaleDiff = newScale / initialPinchScale;
+				zoomX = (midpoint.x - pinchCenterX) + initialZoomX * scaleDiff;
+				zoomY = (midpoint.y - pinchCenterY) + initialZoomY * scaleDiff;
+			}
+			return;
+		}
+		
+		// Handle panning when zoomed
+		if (isPanning && isZoomed && e.touches.length === 1) {
+			e.preventDefault();
+			const touch = e.touches[0];
+			const deltaX = touch.clientX - panStartX;
+			const deltaY = touch.clientY - panStartY;
+			zoomX = initialZoomX + deltaX;
+			zoomY = initialZoomY + deltaY;
+			return;
+		}
+		
+		if (e.touches.length !== 1 || isPinching) return;
 		
 		const touch = e.touches[0];
 		const deltaX = touch.clientX - touchStartX;
@@ -142,6 +287,57 @@
 	}
 	
 	function handleTouchEnd(e: TouchEvent) {
+		// Handle pinch end
+		if (isPinching) {
+			isPinching = false;
+			initialZoomX = zoomX;
+			initialZoomY = zoomY;
+			// Snap back to 1x if close enough
+			if (zoomScale < 1.1) {
+				resetZoom();
+			}
+			return;
+		}
+		
+		// Handle pan end
+		if (isPanning) {
+			isPanning = false;
+			initialZoomX = zoomX;
+			initialZoomY = zoomY;
+			return;
+		}
+		
+		// Detect double tap (only for images, not videos)
+		if (!isSwiping && e.changedTouches.length === 1 && currentItem?.type === 'image') {
+			const touch = e.changedTouches[0];
+			const now = Date.now();
+			const timeDiff = now - lastTapTime;
+			const dx = touch.clientX - lastTapX;
+			const dy = touch.clientY - lastTapY;
+			const distance = Math.sqrt(dx * dx + dy * dy);
+			
+			if (timeDiff < DOUBLE_TAP_DELAY && distance < DOUBLE_TAP_DISTANCE) {
+				// Double tap detected - toggle zoom
+				if (isZoomed) {
+					resetZoom();
+				} else {
+					// Zoom to 2x centered on tap location
+					zoomScale = 2.5;
+					// Center the zoom on the tap point (relative to viewport center)
+					const viewportCenterX = window.innerWidth / 2;
+					const viewportCenterY = window.innerHeight / 2;
+					zoomX = (viewportCenterX - touch.clientX) * (zoomScale - 1);
+					zoomY = (viewportCenterY - touch.clientY) * (zoomScale - 1);
+				}
+				lastTapTime = 0; // Reset to prevent triple-tap issues
+				return;
+			}
+			
+			lastTapTime = now;
+			lastTapX = touch.clientX;
+			lastTapY = touch.clientY;
+		}
+		
 		if (!isSwiping) {
 			touchDeltaX = 0;
 			touchDeltaY = 0;
@@ -180,6 +376,13 @@
 
 	let overlayOpacity = $derived(Math.max(0, 1 - Math.abs(touchDeltaY) / 300));
 	let contentScale = $derived(Math.max(0.5, 1 - Math.abs(touchDeltaY) / 600));
+	
+	// Combined transform for zoomed image
+	let imageTransform = $derived(
+		isZoomed || isPinching
+			? `scale(${zoomScale}) translate(${zoomX / zoomScale}px, ${zoomY / zoomScale}px)`
+			: ''
+	);
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -230,7 +433,27 @@
 					playsinline
 				></video>
 			{:else if currentItem}
-				<img src={currentItem.url} alt="" class="lightbox-image" />
+				<div class="image-container">
+					{#if imageLoading}
+						<div class="loading-spinner" aria-label="Loading image">
+							<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="white" stroke-width="2">
+								<circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+								<path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round">
+									<animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
+								</path>
+							</svg>
+						</div>
+					{/if}
+					<img 
+						src={currentItem.url} 
+						alt="" 
+						class="lightbox-image" 
+						class:loaded={!imageLoading}
+						class:zoomed={isZoomed || isPinching}
+						style={imageTransform ? `transform: ${imageTransform}` : ''}
+						onload={() => handleImageLoad(currentItem.url)}
+					/>
+				</div>
 			{/if}
 
 			{#if mediaItems.length > 1}
@@ -268,6 +491,13 @@
 						{/if}
 					</button>
 				{/each}
+			</div>
+		{/if}
+		
+		{#if isZoomed}
+			<div class="zoom-indicator">
+				<span>{Math.round(zoomScale * 100)}%</span>
+				<span class="zoom-hint">Double-tap to reset</span>
 			</div>
 		{/if}
 	</div>
@@ -316,12 +546,52 @@
 		flex: 1;
 	}
 
+	.image-container {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		max-width: 100%;
+		max-height: 100%;
+		min-width: 80px;
+		min-height: 80px;
+	}
+
+	.loading-spinner {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1;
+		pointer-events: none;
+	}
+
 	.lightbox-image,
 	.lightbox-video {
 		max-width: 100%;
 		max-height: 100%;
 		object-fit: contain;
 		border-radius: var(--radius-md);
+		transition: transform 0.1s ease-out, opacity 0.2s ease-out;
+		transform-origin: center center;
+		opacity: 0;
+	}
+
+	.lightbox-image.loaded {
+		opacity: 1;
+	}
+
+	.lightbox-video {
+		opacity: 1;
+	}
+	
+	.lightbox-image.zoomed {
+		max-width: none;
+		max-height: none;
+		border-radius: 0;
+		transition: none;
+		opacity: 1;
 	}
 
 	.lightbox-video {
@@ -347,6 +617,29 @@
 		color: white;
 		font-size: 0.875rem;
 		margin-top: 1rem;
+	}
+	
+	.zoom-indicator {
+		position: absolute;
+		bottom: 1.5rem;
+		left: 50%;
+		transform: translateX(-50%);
+		background: rgba(0, 0, 0, 0.7);
+		color: white;
+		padding: 0.5rem 1rem;
+		border-radius: var(--radius-md);
+		font-size: 0.875rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.25rem;
+		pointer-events: none;
+		z-index: 1002;
+	}
+	
+	.zoom-hint {
+		font-size: 0.75rem;
+		opacity: 0.7;
 	}
 
 	.lightbox-thumbnails {
@@ -424,14 +717,19 @@
 		
 		.lightbox-content {
 			width: 100%;
-			touch-action: none; /* Disable browser handling of gestures to allow custom swipe logic */
+			touch-action: none; /* Disable browser handling of gestures to allow custom swipe/pinch logic */
+			overflow: hidden;
+		}
+		
+		.lightbox-image.zoomed {
+			cursor: grab;
 		}
 		
 		.lightbox-counter {
 			font-size: 1rem;
 		}
 		
-		/* Swipe hint on mobile */
+		/* Swipe/zoom hint on mobile */
 		.lightbox-overlay::after {
 			content: '';
 			position: absolute;
@@ -442,6 +740,10 @@
 			height: 4px;
 			background: rgba(255, 255, 255, 0.3);
 			border-radius: 2px;
+		}
+		
+		.zoom-indicator {
+			bottom: 5rem;
 		}
 	}
 </style>
