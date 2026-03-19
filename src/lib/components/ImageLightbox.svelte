@@ -130,6 +130,8 @@
 		zoomScale = 1;
 		zoomX = 0;
 		zoomY = 0;
+		initialZoomX = 0;
+		initialZoomY = 0;
 	}
 	
 	// Reset zoom when lightbox closes
@@ -193,6 +195,8 @@
 			isPanning = false;
 			initialPinchDistance = getDistance(e.touches[0], e.touches[1]);
 			initialPinchScale = zoomScale;
+			initialZoomX = zoomX;
+			initialZoomY = zoomY;
 			const midpoint = getMidpoint(e.touches[0], e.touches[1]);
 			pinchCenterX = midpoint.x;
 			pinchCenterY = midpoint.y;
@@ -302,6 +306,33 @@
 		// Handle pan end
 		if (isPanning) {
 			isPanning = false;
+			
+			// Check if this was a tap (no significant movement) - allow double-tap to reset zoom
+			if (e.changedTouches.length === 1 && currentItem?.type === 'image') {
+				const touch = e.changedTouches[0];
+				const panDx = touch.clientX - panStartX;
+				const panDy = touch.clientY - panStartY;
+				const panDistance = Math.sqrt(panDx * panDx + panDy * panDy);
+				
+				if (panDistance < 10) {
+					const now = Date.now();
+					const timeDiff = now - lastTapTime;
+					const dx = touch.clientX - lastTapX;
+					const dy = touch.clientY - lastTapY;
+					const distance = Math.sqrt(dx * dx + dy * dy);
+					
+					if (timeDiff < DOUBLE_TAP_DELAY && distance < DOUBLE_TAP_DISTANCE) {
+						resetZoom();
+						lastTapTime = 0;
+						return;
+					}
+					
+					lastTapTime = now;
+					lastTapX = touch.clientX;
+					lastTapY = touch.clientY;
+				}
+			}
+			
 			initialZoomX = zoomX;
 			initialZoomY = zoomY;
 			return;
