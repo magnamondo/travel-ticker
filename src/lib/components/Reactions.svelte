@@ -260,6 +260,12 @@
 		color: var(--color-text-muted);
 	}
 
+	.expand-btn svg {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
+	}
+
 	.expand-btn:hover {
 		color: var(--color-primary);
 		background: var(--color-bg);
