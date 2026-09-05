@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import ChunkedUploader from '$lib/components/ChunkedUploader.svelte';
@@ -704,16 +705,46 @@
 <div class="entries-page">
 	<div class="page-header">
 		<h1>Timeline Entries</h1>
+		{#if data.activeTicker}
+			<a class="view-ticker-link" href={resolve(`/t/${data.activeTicker.slug}`)} target="_blank" rel="noopener">
+				View /t/{data.activeTicker.slug} ↗
+			</a>
+		{/if}
 	</div>
+
+	{#if !data.activeTicker}
+		<div class="no-ticker">
+			<p>Entries live inside a ticker, and there aren't any yet.</p>
+			<a href={resolve('/admin/tickers')} class="btn-primary">Create a ticker</a>
+		</div>
+	{:else}
+		<!-- Ticker switcher: the editor works on one ticker at a time -->
+		<div class="ticker-switcher">
+			<span class="bar-label">Ticker:</span>
+			<div class="ticker-tabs">
+				{#each data.tickers as t (t.id)}
+					<a
+						class="ticker-tab"
+						class:active={t.id === data.activeTicker.id}
+						href="{resolve('/admin/entries')}?ticker={t.slug}"
+						data-sveltekit-noscroll
+					>
+						{t.name}
+						{#if !t.published}<span class="draft-dot" title="Draft">•</span>{/if}
+					</a>
+				{/each}
+			</div>
+		</div>
 
 	<!-- Add New Segment Bar -->
 	<div class="add-segment-bar">
 		<form method="POST" action="?/addSegment" use:enhance class="add-segment-form">
 			<span class="bar-label">New Segment:</span>
+			<input type="hidden" name="tickerId" value={data.activeTicker.id} />
 			<input type="text" name="icon" required placeholder="🇫🇷" class="icon-input" />
 			<input type="text" name="name" required placeholder="Segment name" class="name-input" />
 			<input type="hidden" name="sortOrder" value={data.segments.length} />
-			<button type="submit" class="btn-primary">Add</button>
+			<button type="submit" class="btn-primary">Add to {data.activeTicker.name}</button>
 		</form>
 	</div>
 
@@ -1084,6 +1115,7 @@
 			</div>
 		{/each}
 	</div>
+	{/if}
 </div>
 
 <ConfirmDialog
@@ -1107,6 +1139,87 @@
 />
 
 <style>
+	.page-header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.view-ticker-link {
+		font-family: var(--font-mono);
+		font-size: 0.78rem;
+		color: var(--color-primary);
+		text-decoration: none;
+	}
+
+	.view-ticker-link:hover {
+		text-decoration: underline;
+	}
+
+	.no-ticker {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		padding: 3rem 1rem;
+		text-align: center;
+		color: var(--color-text-secondary);
+		border: 1px dashed var(--color-border);
+		border-radius: 8px;
+	}
+
+	.no-ticker .btn-primary {
+		text-decoration: none;
+		display: inline-block;
+	}
+
+	.ticker-switcher {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		margin-bottom: 1rem;
+	}
+
+	.ticker-tabs {
+		display: flex;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.ticker-tab {
+		padding: 0.35rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-secondary);
+		font-size: 0.8rem;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
+	.ticker-tab:hover {
+		border-color: var(--color-border-strong);
+		color: var(--color-text);
+	}
+
+	.ticker-tab.active {
+		background: var(--color-primary);
+		border-color: var(--color-primary);
+		color: white;
+	}
+
+	.draft-dot {
+		color: var(--color-accent);
+		font-weight: 700;
+	}
+
+	.ticker-tab.active .draft-dot {
+		color: white;
+	}
+
 	.entries-page h1 {
 		font-size: 1.5rem;
 		font-weight: 600;

@@ -1,6 +1,6 @@
 import type { PageServerLoad, Actions } from './$types';
 import { db } from '$lib/server/db';
-import { segment, milestone, milestoneMedia, group, milestoneGroup, videoJob, uploadSession } from '$lib/server/db/schema';
+import { ticker, segment, milestone, milestoneMedia, group, milestoneGroup, videoJob, uploadSession } from '$lib/server/db/schema';
 import { asc, eq, desc, max, and, inArray } from 'drizzle-orm';
 import { fail } from '@sveltejs/kit';
 import { randomUUID } from 'crypto';
@@ -24,30 +24,66 @@ async function deleteFileFromUrl(url: string | null): Promise<void> {
 	}
 }
 
-export const load: PageServerLoad = async () => {
-	const segments = await db.select().from(segment).orderBy(asc(segment.sortOrder));
-
-	// Get all milestones (including unpublished drafts for admin)
-	const milestones = await db
-		.select({
-			id: milestone.id,
-			segmentId: milestone.segmentId,
-			title: milestone.title,
-			description: milestone.description,
-			date: milestone.date,
-			avatar: milestone.avatar,
-			meta: milestone.meta,
-			published: milestone.published,
-			sortOrder: milestone.sortOrder
-		})
-		.from(milestone)
-		.orderBy(desc(milestone.date), asc(milestone.sortOrder));
-
-	// Get all media (worker updates milestone_media directly with final URLs)
-	const allMedia = await db
+export const load: PageServerLoad = async ({ url }) => {
+	const tickers = await db
 		.select()
-		.from(milestoneMedia)
-		.orderBy(asc(milestoneMedia.sortOrder));
+		.from(ticker)
+		.orderBy(asc(ticker.sortOrder), asc(ticker.createdAt));
+
+	// The editor works on one ticker at a time; ?ticker=<slug> picks it,
+	// defaulting to the first one.
+	const requestedSlug = url.searchParams.get('ticker');
+	const activeTicker =
+		(requestedSlug ? tickers.find((t) => t.slug === requestedSlug) : undefined) ?? tickers[0] ?? null;
+
+	if (!activeTicker) {
+		return {
+			tickers: [],
+			activeTicker: null,
+			segments: [],
+			groupedEntries: [],
+			availableImages: [],
+			groups: [],
+			milestoneGroupAssignments: []
+		};
+	}
+
+	const segments = await db
+		.select()
+		.from(segment)
+		.where(eq(segment.tickerId, activeTicker.id))
+		.orderBy(asc(segment.sortOrder));
+
+	const segmentIds = segments.map((s) => s.id);
+
+	// Get this ticker's milestones (including unpublished drafts for admin)
+	const milestones = segmentIds.length
+		? await db
+				.select({
+					id: milestone.id,
+					segmentId: milestone.segmentId,
+					title: milestone.title,
+					description: milestone.description,
+					date: milestone.date,
+					avatar: milestone.avatar,
+					meta: milestone.meta,
+					published: milestone.published,
+					sortOrder: milestone.sortOrder
+				})
+				.from(milestone)
+				.where(inArray(milestone.segmentId, segmentIds))
+				.orderBy(desc(milestone.date), asc(milestone.sortOrder))
+		: [];
+
+	// Get media for this ticker's entries (worker updates milestone_media directly with final URLs)
+	const milestoneIds = milestones.map((m) => m.id);
+	const allMedia = milestoneIds.length
+		? await db
+				.select()
+				.from(milestoneMedia)
+				.where(inArray(milestoneMedia.milestoneId, milestoneIds))
+				.orderBy(asc(milestoneMedia.sortOrder))
+		: [];
 
 	// Group media by milestone
 	const mediaByMilestone = new Map<string, typeof allMedia>();
@@ -100,6 +136,13 @@ export const load: PageServerLoad = async () => {
 		.from(milestoneGroup);
 
 	return {
+		tickers: tickers.map((t) => ({ id: t.id, slug: t.slug, name: t.name, published: t.published })),
+		activeTicker: {
+			id: activeTicker.id,
+			slug: activeTicker.slug,
+			name: activeTicker.name,
+			published: activeTicker.published
+		},
 		segments,
 		groupedEntries,
 		availableImages,
@@ -345,23 +388,40 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const name = formData.get('name') as string;
 		const icon = formData.get('icon') as string;
+		const tickerId = formData.get('tickerId') as string;
 		const sortOrderInput = formData.get('sortOrder') as string;
 
 		if (!name || !icon) {
 			return fail(400, { error: 'Name and icon are required' });
 		}
+		if (!tickerId) {
+			return fail(400, { error: 'Pick a ticker for this segment' });
+		}
 
-		// If sortOrder not provided, get the next sequential value
+		const [tickerRow] = await db
+			.select({ id: ticker.id })
+			.from(ticker)
+			.where(eq(ticker.id, tickerId))
+			.limit(1);
+		if (!tickerRow) {
+			return fail(400, { error: 'Ticker not found' });
+		}
+
+		// If sortOrder not provided, get the next value within this ticker
 		let sortOrder: number;
 		if (sortOrderInput && sortOrderInput.trim() !== '') {
 			sortOrder = parseInt(sortOrderInput) || 0;
 		} else {
-			const [result] = await db.select({ maxOrder: max(segment.sortOrder) }).from(segment);
+			const [result] = await db
+				.select({ maxOrder: max(segment.sortOrder) })
+				.from(segment)
+				.where(eq(segment.tickerId, tickerId));
 			sortOrder = (result?.maxOrder ?? -1) + 1;
 		}
 
 		await db.insert(segment).values({
 			id: randomUUID(),
+			tickerId,
 			name,
 			icon,
 			sortOrder,

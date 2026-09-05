@@ -4,6 +4,13 @@ A travel journal and timeline application. Document your journeys with photos, v
 
 ## Features
 
+### Tickers
+- Multiple independent timelines ("tickers"), each with its own name, route labels, cover image and URL
+- Index page at `/` lists every published ticker with entry counts, last-updated date and preview thumbnails
+- Each ticker lives at `/t/<slug>`, its entries at `/t/<slug>/entry/<id>`
+- Tickers can be kept as drafts - visible to admins only, hidden from the index, the timeline and the API
+- Content hierarchy: ticker -> segment -> entry
+
 ### Public Timeline
 - Vertical timeline with entries grouped by segment
 - Segments organize content by theme with custom emoji icons
@@ -22,8 +29,9 @@ A travel journal and timeline application. Document your journeys with photos, v
 - **Chunked uploads**: Resumable uploads for large files (up to 500MB)
 
 ### Admin Dashboard
+- Create and manage tickers (name, slug, route labels, cover image, publish state)
 - Create and manage timeline entries (milestones)
-- Organize content into segments
+- Organize content into segments, scoped to one ticker at a time
 - Drag-and-drop reordering for segments, entries, and media
 - Publish/unpublish entries (draft mode)
 - User management with role-based permissions
@@ -165,13 +173,15 @@ docker run --rm \
 ```
 src/
 ├── routes/
-│   ├── (app)/          # Public pages
+│   ├── (app)/          # Profile pages
+│   ├── (ticker)/       # Ticker index (/) and timelines (/t/<slug>)
 │   ├── (admin)/        # Admin dashboard
 │   ├── (auth)/         # Login, register, verify
 │   └── api/            # REST endpoints
 ├── lib/
 │   ├── server/
 │   │   ├── db/         # Drizzle schema
+│   │   ├── tickers.ts  # Ticker lookup, slugs, visibility
 │   │   ├── image.ts    # Image processing
 │   │   ├── video.ts    # Video job queue
 │   │   └── auth.ts     # Authentication
@@ -202,7 +212,7 @@ Large files use chunked uploads:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/milestones` | Paginated published milestones |
+| `GET /api/milestones?ticker=<slug>` | Paginated milestones for one ticker (`ticker` is required) |
 | `GET /api/video-status/[jobId]` | Video transcoding status |
 | `POST /api/reactions` | Toggle emoji reaction |
 | `POST /api/upload` | Initialize chunked upload |

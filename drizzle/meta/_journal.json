@@ -57,6 +57,13 @@
       "when": 1770859880958,
       "tag": "0007_extension_count",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788621010133,
+      "tag": "0008_multi_ticker",
+      "breakpoints": true
     }
   ]
 }

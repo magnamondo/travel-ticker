@@ -3,6 +3,7 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import Toast from '$lib/components/Toast.svelte';
+	import SiteFooter from '$lib/components/SiteFooter.svelte';
 	import { initErrorReporting } from '$lib/client-error';
 
 	let { children } = $props();
@@ -17,4 +18,5 @@
 </svelte:head>
 
 {@render children()}
+<SiteFooter />
 <Toast />

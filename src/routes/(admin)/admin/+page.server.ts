@@ -1,9 +1,10 @@
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
-import { segment, milestone, milestoneMedia, user, comment } from '$lib/server/db/schema';
+import { ticker, segment, milestone, milestoneMedia, user, comment } from '$lib/server/db/schema';
 import { count } from 'drizzle-orm';
 
 export const load: PageServerLoad = async () => {
+	const [tickerResult] = await db.select({ count: count() }).from(ticker);
 	const [segmentResult] = await db.select({ count: count() }).from(segment);
 	const [milestoneResult] = await db.select({ count: count() }).from(milestone);
 	const [mediaResult] = await db.select({ count: count() }).from(milestoneMedia);
@@ -11,6 +12,7 @@ export const load: PageServerLoad = async () => {
 	const [commentResult] = await db.select({ count: count() }).from(comment);
 
 	return {
+		tickerCount: tickerResult.count,
 		segmentCount: segmentResult.count,
 		milestoneCount: milestoneResult.count,
 		mediaCount: mediaResult.count,

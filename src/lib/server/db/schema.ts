@@ -72,8 +72,30 @@ export const userGroup = sqliteTable('user_group', {
 	joinedAt: integer('joined_at', { mode: 'timestamp' }).notNull()
 });
 
+// A ticker is a self-contained timeline (a trip, a project, a season).
+// Segments belong to exactly one ticker, milestones follow their segment.
+export const ticker = sqliteTable('ticker', {
+	id: text('id').primaryKey(),
+	// URL identifier, e.g. "toulouse-lome" -> /t/toulouse-lome
+	slug: text('slug').notNull().unique(),
+	name: text('name').notNull(),
+	// Shown under the title on the index card and the timeline header
+	tagline: text('tagline'),
+	description: text('description'),
+	// Header arrow endpoints, e.g. "Toulouse" -> "Lome". Both optional.
+	originLabel: text('origin_label'),
+	destinationLabel: text('destination_label'),
+	coverImage: text('cover_image'),
+	published: integer('published', { mode: 'boolean' }).default(false).notNull(),
+	sortOrder: integer('sort_order').notNull().default(0),
+	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
+});
+
 export const segment = sqliteTable('segment', {
 	id: text('id').primaryKey(),
+	tickerId: text('ticker_id')
+		.notNull()
+		.references(() => ticker.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(),
 	icon: text('icon').notNull(),
 	sortOrder: integer('sort_order').notNull(),
@@ -185,6 +207,7 @@ export const videoJob = sqliteTable('video_job', {
 export type Session = typeof session.$inferSelect;
 export type User = typeof user.$inferSelect;
 export type Group = typeof group.$inferSelect;
+export type Ticker = typeof ticker.$inferSelect;
 export type UserGroup = typeof userGroup.$inferSelect;
 export type Segment = typeof segment.$inferSelect;
 export type Milestone = typeof milestone.$inferSelect;

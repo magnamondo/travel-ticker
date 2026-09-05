@@ -22,6 +22,7 @@
 		</div>
 		<nav class="admin-nav">
 			<a href="/admin" onclick={() => (menuOpen = false)}>Dashboard</a>
+			<a href="/admin/tickers" onclick={() => (menuOpen = false)}>Tickers</a>
 			<a href="/admin/entries" onclick={() => (menuOpen = false)}>Entries</a>
 			<a href="/admin/media" onclick={() => (menuOpen = false)}>Media</a>
 			<a href="/admin/users" onclick={() => (menuOpen = false)}>Users</a>

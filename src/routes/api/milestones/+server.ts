@@ -1,9 +1,10 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { milestone, segment, milestoneMedia, reaction, videoJob, comment, milestoneGroup, group } from '$lib/server/db/schema';
+import { milestone, segment, milestoneMedia, reaction, videoJob, comment, milestoneGroup, group, ticker } from '$lib/server/db/schema';
 import { desc, eq, sql, count, and, asc, inArray, notInArray } from 'drizzle-orm';
 import { getUserGroupIds } from '$lib/server/groups';
+import { canViewUnpublishedTickers } from '$lib/server/tickers';
 import { isAdmin } from '$lib/roles';
 
 type MetaItem = {
@@ -48,8 +49,27 @@ const PAGE_SIZE = 10;
 export const GET: RequestHandler = async ({ url, locals }) => {
 	const offset = parseInt(url.searchParams.get('offset') || '0');
 	const limit = parseInt(url.searchParams.get('limit') || String(PAGE_SIZE));
+	const tickerSlug = url.searchParams.get('ticker');
 	const userId = locals.user?.id;
 	const userIsAdmin = isAdmin(locals.user?.roles);
+
+	// Entries are always scoped to one ticker; without a slug there is no timeline to render.
+	if (!tickerSlug) {
+		return json({ error: 'Missing required "ticker" parameter' }, { status: 400 });
+	}
+
+	const [tickerRow] = await db
+		.select({ id: ticker.id, published: ticker.published })
+		.from(ticker)
+		.where(eq(ticker.slug, tickerSlug))
+		.limit(1);
+
+	// Unpublished tickers are invisible to non-admins, same as a missing one.
+	if (!tickerRow || (!tickerRow.published && !canViewUnpublishedTickers(locals.user?.roles))) {
+		return json({ error: 'Ticker not found' }, { status: 404 });
+	}
+
+	const tickerCondition = eq(segment.tickerId, tickerRow.id);
 
 	// Get user's group IDs for milestone-level filtering
 	const userGroupIds = userId ? await getUserGroupIds(userId) : [];
@@ -74,28 +94,33 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	// - Non-admins see only published, admins see all
 	// - Handle group-based access restrictions
 	const publishedCondition = eq(milestone.published, true);
-	
-	let accessCondition;
+
+	let visibilityCondition;
 	if (userIsAdmin) {
 		// Admin sees all milestones (published and unpublished)
-		accessCondition = undefined;
+		visibilityCondition = undefined;
 	} else if (allRestrictedMilestoneIds.length === 0) {
 		// No restricted milestones exist - all public
-		accessCondition = publishedCondition;
+		visibilityCondition = publishedCondition;
 	} else if (accessibleRestrictedIds.length === 0) {
 		// User has no access to any restricted milestones - only show unrestricted
-		accessCondition = and(publishedCondition, notInArray(milestone.id, allRestrictedMilestoneIds));
+		visibilityCondition = and(publishedCondition, notInArray(milestone.id, allRestrictedMilestoneIds));
 	} else {
 		// User can see unrestricted OR their accessible restricted milestones
 		// Note: We need to handle this in two parts since we can't combine notInArray with inArray in OR
 		// Solution: exclude restricted milestones user doesn't have access to
 		const inaccessibleIds = allRestrictedMilestoneIds.filter(id => !accessibleRestrictedIds.includes(id));
 		if (inaccessibleIds.length === 0) {
-			accessCondition = publishedCondition;
+			visibilityCondition = publishedCondition;
 		} else {
-			accessCondition = and(publishedCondition, notInArray(milestone.id, inaccessibleIds));
+			visibilityCondition = and(publishedCondition, notInArray(milestone.id, inaccessibleIds));
 		}
 	}
+
+	// Ticker scope is non-negotiable; group/publish rules narrow it further.
+	const accessCondition = visibilityCondition
+		? and(tickerCondition, visibilityCondition)
+		: tickerCondition;
 
 	// Fetch milestones with their segments
 	const milestonesWithSegments = await db
@@ -294,8 +319,12 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		};
 	});
 
-	// Get total count
-	const totalResult = await db.select({ count: count() }).from(milestone);
+	// Get total count for this ticker, using the same visibility rules
+	const totalResult = await db
+		.select({ count: count() })
+		.from(milestone)
+		.innerJoin(segment, eq(milestone.segmentId, segment.id))
+		.where(accessCondition);
 	const total = totalResult[0]?.count || 0;
 
 	return json({

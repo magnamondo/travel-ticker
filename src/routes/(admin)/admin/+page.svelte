@@ -7,6 +7,10 @@
 	
 	<div class="stats">
 		<div class="stat-card">
+			<span class="stat-value">{data.tickerCount}</span>
+			<span class="stat-label">Tickers</span>
+		</div>
+		<div class="stat-card">
 			<span class="stat-value">{data.segmentCount}</span>
 			<span class="stat-label">Segments</span>
 		</div>
@@ -31,6 +35,7 @@
 	<div class="quick-actions">
 		<h2>Quick Actions</h2>
 		<div class="actions">
+			<a href="/admin/tickers" class="action-btn">Manage Tickers</a>
 			<a href="/admin/entries" class="action-btn">Manage Entries</a>
 			<a href="/admin/media" class="action-btn">Manage Media</a>
 			<a href="/admin/users" class="action-btn">Manage Users</a>

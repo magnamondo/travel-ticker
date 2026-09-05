@@ -18,6 +18,11 @@ FROM deps AS builder
 
 WORKDIR /app
 
+# Short commit stamped into the footer. alpine has no git binary, so the value
+# has to come in from outside; the build still succeeds without it.
+ARG GIT_SHA=""
+ENV GIT_SHA=$GIT_SHA
+
 # Copy source code
 COPY . .
 

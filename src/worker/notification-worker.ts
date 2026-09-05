@@ -62,8 +62,15 @@ const notificationQueue = sqliteTable('notification_queue', {
 	error: text('error')
 });
 
+const ticker = sqliteTable('ticker', {
+	id: text('id').primaryKey(),
+	slug: text('slug').notNull(),
+	name: text('name').notNull()
+});
+
 const segment = sqliteTable('segment', {
 	id: text('id').primaryKey(),
+	tickerId: text('ticker_id').notNull(),
 	name: text('name').notNull()
 });
 
@@ -118,6 +125,9 @@ interface MilestoneInfo {
 	id: string;
 	title: string;
 	segmentName: string;
+	/** Ticker slug, for the canonical /t/<slug>/entry/<id> link. */
+	tickerSlug: string;
+	tickerName: string;
 }
 
 function generateNewMilestonesEmail(
@@ -133,11 +143,16 @@ function generateNewMilestonesEmail(
 	const logoUrl = `${origin}/logo.jpg`;
 	const year = new Date().getFullYear();
 
+	// Prefer the canonical ticker URL; /entry/<id> still redirects there if the
+	// slug is somehow unknown.
+	const entryUrl = (m: MilestoneInfo) =>
+		m.tickerSlug ? `${origin}/t/${m.tickerSlug}/entry/${m.id}` : `${origin}/entry/${m.id}`;
+
 	// Generate milestone cards
 	const milestoneCards = milestones.map(m => `
 		<div style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; margin-bottom: 12px;">
-			<a href="${origin}/entry/${m.id}" style="color: #000; text-decoration: none; font-weight: 600; font-size: 16px;">${m.title}</a>
-			<p style="margin: 4px 0 0; color: #666; font-size: 13px;">${m.segmentName}</p>
+			<a href="${entryUrl(m)}" style="color: #000; text-decoration: none; font-weight: 600; font-size: 16px;">${m.title}</a>
+			<p style="margin: 4px 0 0; color: #666; font-size: 13px;">${m.tickerName ? `${m.tickerName} &middot; ` : ''}${m.segmentName}</p>
 		</div>
 	`).join('');
 
@@ -387,14 +402,21 @@ async function processNewMilestonesNotification(
 		userGroupMap.get(ug.userId)!.add(ug.groupId);
 	}
 
-	// Get segment names
+	// Get segment names plus the ticker each segment belongs to, so email
+	// links point at the canonical /t/<slug>/entry/<id> URL.
 	const segmentIds = [...new Set(newMilestones.map(m => m.segmentId))];
 	const segments = await db
-		.select({ id: segment.id, name: segment.name })
+		.select({
+			id: segment.id,
+			name: segment.name,
+			tickerSlug: ticker.slug,
+			tickerName: ticker.name
+		})
 		.from(segment)
+		.innerJoin(ticker, eq(segment.tickerId, ticker.id))
 		.where(inArray(segment.id, segmentIds));
-	
-	const segmentMap = new Map(segments.map(s => [s.id, s.name]));
+
+	const segmentMap = new Map(segments.map(s => [s.id, s]));
 
 	// Build per-subscriber email with only milestones they can access
 	const emails: EmailMessage[] = [];
@@ -428,11 +450,17 @@ async function processNewMilestonesNotification(
 			milestonesActuallySent.add(m.id);
 		}
 
-		const milestoneInfos: MilestoneInfo[] = accessibleMilestones.map(m => ({
-			id: m.id,
-			title: m.title,
-			segmentName: segmentMap.get(m.segmentId) ?? 'Updates'
-		}));
+		const milestoneInfos: MilestoneInfo[] = accessibleMilestones.map(m => {
+			const seg = segmentMap.get(m.segmentId);
+			return {
+				id: m.id,
+				title: m.title,
+				segmentName: seg?.name ?? 'Updates',
+				// Fall back to the legacy /entry/<id> redirect if the join came up empty.
+				tickerSlug: seg?.tickerSlug ?? '',
+				tickerName: seg?.tickerName ?? ''
+			};
+		});
 
 		const { subject, html } = generateNewMilestonesEmail(
 			{ email: subscriber.email, firstName: subscriber.firstName },

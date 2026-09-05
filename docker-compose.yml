@@ -48,6 +48,9 @@ services:
       context: .
       dockerfile: Dockerfile
       target: server
+      args:
+        # Set GIT_SHA in the environment (or .deploy.env) to stamp the build.
+        GIT_SHA: ${GIT_SHA:-}
     container_name: travel-ticker
     restart: unless-stopped
     command: ["./docker-entrypoint.sh", "server"]

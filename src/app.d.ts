@@ -13,6 +13,11 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+
+	// Injected at build time by `define` in vite.config.ts
+	const __APP_VERSION__: string;
+	const __APP_BUILD_TIME__: string;
+	const __APP_GIT_SHA__: string | null;
 }
 
 export {};
