@@ -6,6 +6,8 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { resolve } from '$app/paths';
 	import { toasts } from '$lib/stores/toast.svelte';
+	import { createScrollTracker } from '$lib/scroll.svelte';
+	import TickerTopBar from '$lib/components/TickerTopBar.svelte';
 
 	type ReactionCount = {
 		emoji: string;
@@ -241,6 +243,135 @@
 		return () => observer.disconnect();
 	});
 
+	// --- Tall header condense, with handover to the compact bar ---------------
+
+	/** Height of the compact bar; also the line entries are measured against. */
+	const BAR_HEIGHT = 58;
+
+	const scroll = createScrollTracker();
+
+	let sectionEl = $state<HTMLElement>();
+	let headerEl = $state<HTMLElement>();
+	let headerHeight = $state(0);
+	let currentDate = $state('');
+
+	$effect(() => {
+		const el = headerEl;
+		if (!el) return;
+
+		// offsetHeight, not getBoundingClientRect: the header is scaled while it
+		// fades, and a transformed rect would feed its own scale back in.
+		const measure = () => (headerHeight = el.offsetHeight);
+		measure();
+
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
+
+	/** 0-1 progress of the tall header's fade and lift. */
+	let headerT = $derived(
+		headerHeight > 0 ? Math.min(1, Math.max(0, scroll.scrollY / Math.max(1, headerHeight - 70))) : 0
+	);
+
+	// The header is fully transparent well before this point, so the two are
+	// never on screen together.
+	let docked = $derived(
+		headerHeight > 0 && scroll.scrollY >= Math.max(60, headerHeight - BAR_HEIGHT)
+	);
+
+	// The bar's date comes from the entry nearest the top of the viewport, from
+	// a single observer over the cards currently rendered.
+	$effect(() => {
+		if (!sectionEl || milestones.length === 0) return;
+
+		const cards = sectionEl.querySelectorAll<HTMLElement>('[data-entry-date]');
+		if (cards.length === 0) return;
+
+		let inBand: HTMLElement[] = [];
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const el = entry.target as HTMLElement;
+					inBand = inBand.filter((seen) => seen !== el);
+					if (entry.isIntersecting) inBand.push(el);
+				}
+
+				let topmost: HTMLElement | null = null;
+				let topY = Infinity;
+				for (const el of inBand) {
+					const y = el.getBoundingClientRect().top;
+					if (y < topY) {
+						topY = y;
+						topmost = el;
+					}
+				}
+				if (topmost?.dataset.entryDate) currentDate = topmost.dataset.entryDate;
+			},
+			// A thin band just under the bar, so "in view" means "at the top".
+			{ rootMargin: `-${BAR_HEIGHT}px 0px -80% 0px` }
+		);
+
+		for (const card of cards) observer.observe(card);
+		return () => observer.disconnect();
+	});
+
+	let barDate = $derived(
+		currentDate || (milestones[0] ? formatDateDivider(milestones[0].date) : '')
+	);
+
+	// Read progress is measured against the ticker's whole entry count, not the
+	// document height: the document grows every time a page of entries loads, so
+	// a height-based bar slides backwards as you read. Anchoring to the entries
+	// themselves keeps it monotonic, because loading only appends below.
+	let readProgress = $derived.by(() => {
+		if (!sectionEl || data.total <= 0 || milestones.length === 0) return 0;
+
+		const cards = sectionEl.querySelectorAll<HTMLElement>('[data-entry-date]');
+		if (cards.length === 0) return 0;
+
+		const doc = document.documentElement;
+		const y = scroll.scrollY;
+		const maxScroll = Math.max(0, doc.scrollHeight - doc.clientHeight);
+		const allLoaded = cards.length >= data.total;
+
+		// Scroll position at which each entry comes to rest just under the bar.
+		const docks: number[] = [];
+		for (const card of cards) {
+			docks.push(card.getBoundingClientRect().top + window.scrollY - BAR_HEIGHT);
+		}
+
+		let index = -1;
+		for (let i = 0; i < docks.length; i++) {
+			if (docks[i] > y) break;
+			index = i;
+		}
+		if (index < 0) return 0;
+
+		// Interpolate across the current segment so the bar moves smoothly rather
+		// than stepping once per entry.
+		const start = docks[index];
+		const nextDock = docks[index + 1];
+		let end: number;
+		let span: number;
+		if (nextDock !== undefined && nextDock <= maxScroll) {
+			end = nextDock;
+			span = 1;
+		} else if (allLoaded) {
+			// The page runs out of scroll before the last entries can dock, so the
+			// unreachable tail shares the remaining scroll distance. This is what
+			// lets the bar read exactly 100% at the bottom.
+			end = maxScroll;
+			span = data.total - index;
+		} else {
+			end = start + cards[index].offsetHeight;
+			span = 1;
+		}
+
+		const within = end > start ? Math.min(1, Math.max(0, (y - start) / (end - start))) : 1;
+		return Math.min(1, (index + within * span) / data.total);
+	});
+
 	let pageTitle = $derived(`${data.ticker.name} | Travel Ticker | Magnamondo`);
 	let socialTitle = $derived(`${data.ticker.name} | Travel Ticker`);
 	let socialDescription = $derived(
@@ -267,7 +398,7 @@
 	<meta name="twitter:image" content={socialImage} />
 </svelte:head>
 
-<section class="timeline-section">
+<section class="timeline-section" bind:this={sectionEl}>
 	<a href={resolve('/')} class="back-link">
 		<svg
 			xmlns="http://www.w3.org/2000/svg"
@@ -285,7 +416,12 @@
 		All tickers
 	</a>
 
-	<header class="timeline-header">
+	<header
+		class="timeline-header"
+		class:is-condensed={docked}
+		style="--header-t: {headerT}"
+		bind:this={headerEl}
+	>
 		<a href={resolve('/')} class="home-link" aria-label="All tickers">
 			<img src={logo} alt="Magnamondo" class="logo" />
 		</a>
@@ -327,6 +463,7 @@
 					{/if}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
+						data-entry-date={formatDateDivider(milestone.date)}
 						class="timeline-item {milestone.side}"
 						class:has-meta={milestone.meta?.length}
 						class:swiped={swipedItemId === milestone.id && !isSwiping}
@@ -526,6 +663,16 @@
 	</div>
 </section>
 
+<TickerTopBar
+	{docked}
+	progress={readProgress}
+	originLabel={data.ticker.originLabel}
+	destinationLabel={data.ticker.destinationLabel}
+	fallbackLabel={data.ticker.name}
+	currentDate={barDate}
+	user={data.user ? { email: data.user.email, isAdmin: data.user.isAdmin } : null}
+/>
+
 <ImageLightbox
 	media={lightboxMedia}
 	currentIndex={lightboxIndex}
@@ -543,15 +690,33 @@
 	.timeline-header {
 		text-align: center;
 		margin-bottom: 3rem;
+		margin-top: -3rem;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		/* Stays in flow, but fades and lifts away as the compact bar takes over. */
+		opacity: max(0, 1 - var(--header-t, 0) * 1.15);
+		transform: translateY(calc(var(--header-t, 0) * -18px))
+			scale(calc(1 - var(--header-t, 0) * 0.03));
+		transform-origin: top center;
+		will-change: opacity, transform;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.timeline-header {
+			opacity: 1;
+			transform: none;
+			will-change: auto;
+		}
+
+		.timeline-header.is-condensed {
+			opacity: 0;
+		}
 	}
 
 	.timeline-header .logo {
 		height: 80px;
 		width: 80px;
-		margin-bottom: 1rem;
 	}
 
 	.timeline-header p {
@@ -627,6 +792,9 @@
 		text-decoration: none;
 		font-size: 0.875rem;
 		transition: color 0.2s;
+		margin-top: 1.25rem;
+		position: relative;
+		z-index: 9;
 	}
 
 	.back-link:hover {

@@ -33,6 +33,10 @@ export const load: PageServerLoad = async ({ fetch, url, params, locals }) => {
 			published: ticker.published
 		},
 		milestones: data.milestones,
-		hasMore: data.hasMore
+		hasMore: data.hasMore,
+		// Full entry count for this ticker, under the caller's visibility rules.
+		// The read-progress bar measures against this rather than the document
+		// height, which grows as entries lazy-load.
+		total: (data.total as number | undefined) ?? 0
 	};
 };

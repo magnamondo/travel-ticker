@@ -136,8 +136,8 @@
 	/* The global reset sets img { display: block }, so centering needs the flex
 	   parent above rather than text-align. */
 	.logo {
-		width: 72px;
-		height: 72px;
+		width: 80px;
+		height: 80px;
 	}
 
 	.index-title {

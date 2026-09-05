@@ -18,10 +18,20 @@ const ticker = {
 describe('/t/[slug]/+page.svelte', () => {
 	it('renders the ticker route in the header', async () => {
 		render(Page, {
-			data: { origin: 'http://localhost', ticker, milestones: [], hasMore: false, user: null }
+			data: {
+				origin: 'http://localhost',
+				ticker,
+				milestones: [],
+				hasMore: false,
+				total: 0,
+				user: null
+			}
 		});
 
-		await expect.element(page.getByText('Toulouse')).toBeInTheDocument();
-		await expect.element(page.getByText('Lomé')).toBeInTheDocument();
+		// The route also appears in the compact scroll bar, so scope the
+		// assertion to the tall header's route line.
+		const routeLine = page.getByRole('paragraph').first();
+		await expect.element(routeLine.getByText('Toulouse')).toBeInTheDocument();
+		await expect.element(routeLine.getByText('Lomé')).toBeInTheDocument();
 	});
 });

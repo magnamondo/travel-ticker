@@ -38,7 +38,7 @@
 		{/if}
 		<span class="sep" aria-hidden="true">·</span>
 		<span>
-			built <time datetime={buildTime} title="{fullTimestamp} UTC">{buildDate}</time>
+			<time datetime={buildTime} title="{fullTimestamp} UTC">{buildDate}</time>
 		</span>
 	</p>
 </footer>
