@@ -28,7 +28,7 @@ export interface SendEmailResult {
 	success: boolean;
 	data?: unknown;
 	error?: unknown;
-	emailLogId?: string;
+	providerMessageId?: string;
 }
 
 /**
@@ -57,9 +57,18 @@ export async function sendEmail(
 					contentType: att.contentType
 				}))
 			});
-			success = true;
 			data = result;
-			providerMessageId = result.data?.id;
+			// Resend resolves with { data: null, error } for API failures - an
+			// invalid key, an unverified domain, a rejected recipient - and only
+			// throws on transport errors. Both have to be treated as failures.
+			if (result.error) {
+				console.error('Failed to send email:', result.error);
+				success = false;
+				error = result.error;
+			} else {
+				success = true;
+				providerMessageId = result.data?.id;
+			}
 		} catch (err) {
 			console.error('Failed to send email:', err);
 			success = false;
@@ -87,6 +96,6 @@ export async function sendEmail(
 		providerMessageId = `mock_${generateId()}`;
 	}
 
-	return { success, data, error };
+	return { success, data, error, providerMessageId };
 }
 

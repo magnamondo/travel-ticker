@@ -136,6 +136,13 @@ export const actions: Actions = {
 				await db.update(milestone)
 					.set({ notifiedAt: null })
 					.where(eq(milestone.id, payload.milestoneId));
+			} else if (notification.sentAt) {
+				// Batch entries carry no milestone id. The worker stamps every
+				// milestone in a run with the same timestamp it writes to sentAt,
+				// so that timestamp identifies exactly what this row sent.
+				await db.update(milestone)
+					.set({ notifiedAt: null })
+					.where(eq(milestone.notifiedAt, notification.sentAt));
 			}
 		}
 

@@ -67,7 +67,12 @@ export const actions: Actions = {
 			
 			// Send verification email
 			const origin = event.url.origin;
-			await sendVerifyEmail({ email, verificationToken, userId }, origin);
+			const sendResult = await sendVerifyEmail({ email, verificationToken, userId }, origin);
+			if (!sendResult.success) {
+				// The account exists and the email is taken, so the user cannot
+				// retry by registering again - surface this for manual follow-up.
+				console.error(`Verification email failed for ${email}:`, sendResult.error);
+			}
 
 		} catch (e) {
 			console.error('Registration failed', e);

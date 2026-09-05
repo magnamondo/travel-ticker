@@ -64,6 +64,13 @@
       "when": 1788621010133,
       "tag": "0008_multi_ticker",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788643457151,
+      "tag": "0009_heavy_bromley",
+      "breakpoints": true
     }
   ]
 }

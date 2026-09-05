@@ -42,15 +42,17 @@ export async function queueNotification<T>(
 	const baseDelayMs = options?.delayMs ?? DEFAULT_DELAY_MS;
 	const useBackoff = options?.useExponentialBackoff ?? false;
 
-	// Check for existing pending notification with same groupKey
+	// Check for existing pending notification with same type + groupKey
 	const [existing] = await db
 		.select({ 
 			id: notificationQueue.id,
-			extensionCount: notificationQueue.extensionCount
+			extensionCount: notificationQueue.extensionCount,
+			createdAt: notificationQueue.createdAt
 		})
 		.from(notificationQueue)
 		.where(
 			and(
+				eq(notificationQueue.typeId, typeId),
 				eq(notificationQueue.groupKey, groupKey),
 				eq(notificationQueue.status, 'pending')
 			)
@@ -63,7 +65,11 @@ export async function queueNotification<T>(
 		const delayMs = useBackoff 
 			? calculateBackoffDelay(baseDelayMs, newExtensionCount)
 			: baseDelayMs;
-		const sendAfter = new Date(now.getTime() + delayMs);
+		// Cap against an absolute deadline. Without this, a steady trickle of
+		// events on the same groupKey pushes sendAfter forward forever and the
+		// notification never goes out.
+		const deadline = existing.createdAt.getTime() + MAX_DELAY_MS;
+		const sendAfter = new Date(Math.min(now.getTime() + delayMs, deadline));
 
 		// Extend the existing notification's send time
 		await db

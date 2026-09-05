@@ -1,0 +1,1 @@
+ALTER TABLE `milestone` ADD `published_at` integer;

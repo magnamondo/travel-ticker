@@ -65,7 +65,8 @@ const notificationQueue = sqliteTable('notification_queue', {
 const ticker = sqliteTable('ticker', {
 	id: text('id').primaryKey(),
 	slug: text('slug').notNull(),
-	name: text('name').notNull()
+	name: text('name').notNull(),
+	published: integer('published', { mode: 'boolean' }).notNull()
 });
 
 const segment = sqliteTable('segment', {
@@ -79,6 +80,7 @@ const milestone = sqliteTable('milestone', {
 	segmentId: text('segment_id').notNull(),
 	title: text('title').notNull(),
 	published: integer('published', { mode: 'boolean' }).notNull(),
+	publishedAt: integer('published_at', { mode: 'timestamp' }),
 	notifiedAt: integer('notified_at', { mode: 'timestamp' }),
 	createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
 });
@@ -117,6 +119,16 @@ interface Recipient {
 	firstName?: string | null;
 }
 
+/** Entry titles, ticker names and profile names all land inside email markup. */
+function escapeHtml(value: string): string {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
 // ============================================================================
 // New Milestones Email (consolidated)
 // ============================================================================
@@ -135,7 +147,7 @@ function generateNewMilestonesEmail(
 	milestones: MilestoneInfo[],
 	origin: string
 ): { subject: string; html: string } {
-	const greeting = recipient.firstName ? `Hi ${recipient.firstName},` : 'Hi,';
+	const greeting = recipient.firstName ? `Hi ${escapeHtml(recipient.firstName)},` : 'Hi,';
 	const count = milestones.length;
 	const subject = count === 1 
 		? `New update: ${milestones[0].title}`
@@ -151,8 +163,8 @@ function generateNewMilestonesEmail(
 	// Generate milestone cards
 	const milestoneCards = milestones.map(m => `
 		<div style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; margin-bottom: 12px;">
-			<a href="${entryUrl(m)}" style="color: #000; text-decoration: none; font-weight: 600; font-size: 16px;">${m.title}</a>
-			<p style="margin: 4px 0 0; color: #666; font-size: 13px;">${m.tickerName ? `${m.tickerName} &middot; ` : ''}${m.segmentName}</p>
+			<a href="${entryUrl(m)}" style="color: #000; text-decoration: none; font-weight: 600; font-size: 16px;">${escapeHtml(m.title)}</a>
+			<p style="margin: 4px 0 0; color: #666; font-size: 13px;">${m.tickerName ? `${escapeHtml(m.tickerName)} &middot; ` : ''}${escapeHtml(m.segmentName)}</p>
 		</div>
 	`).join('');
 
@@ -234,44 +246,50 @@ interface EmailMessage {
 const BATCH_SIZE = 100; // Resend batch limit
 const FROM_ADDRESS = 'Magnamondo <system@magnamondo.com>';
 
-async function sendEmailBatch(emails: EmailMessage[]): Promise<{ sent: number; failed: number }> {
+interface BatchResult {
+	sent: number;
+	failed: number;
+	/** Recipients whose batch did not go out, so callers can avoid over-claiming. */
+	failedRecipients: Set<string>;
+}
+
+async function sendEmailBatch(emails: EmailMessage[]): Promise<BatchResult> {
 	if (emails.length === 0) {
-		return { sent: 0, failed: 0 };
+		return { sent: 0, failed: 0, failedRecipients: new Set() };
 	}
 
 	if (resend) {
-		try {
-			// Send in batches of BATCH_SIZE
-			let totalSent = 0;
-			let totalFailed = 0;
+		let totalSent = 0;
+		let totalFailed = 0;
+		const failedRecipients = new Set<string>();
 
-			for (let i = 0; i < emails.length; i += BATCH_SIZE) {
-				const batch = emails.slice(i, i + BATCH_SIZE);
-				
+		// Each batch is tracked on its own: a failure part-way through must not
+		// discard the batches that already went out, or the retry re-sends them.
+		for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+			const batch = emails.slice(i, i + BATCH_SIZE);
+
+			try {
 				const result = await resend.batch.send(batch);
-				
-				// Count successes and failures from the response
-				if (result.data) {
-					// Batch response returns array of { id: string } for each sent email
-					const sentEmails = result.data.data;
-					if (Array.isArray(sentEmails)) {
-						totalSent += sentEmails.filter(item => item.id).length;
-						totalFailed += sentEmails.filter(item => !item.id).length;
-					} else {
-						// Fallback: assume all succeeded if we got data back
-						totalSent += batch.length;
-					}
-				} else if (result.error) {
+
+				if (result.error) {
 					console.error(`  ❌ Batch send error:`, result.error);
 					totalFailed += batch.length;
+					for (const email of batch) failedRecipients.add(email.to);
+					continue;
 				}
-			}
 
-			return { sent: totalSent, failed: totalFailed };
-		} catch (err) {
-			console.error(`  ❌ Batch send exception:`, err);
-			return { sent: 0, failed: emails.length };
+				// Batch response returns array of { id: string } for each sent email.
+				// Validation is strict, so the whole batch stands or falls together.
+				const sentEmails = result.data?.data;
+				totalSent += Array.isArray(sentEmails) ? sentEmails.length : batch.length;
+			} catch (err) {
+				console.error(`  ❌ Batch send exception:`, err);
+				totalFailed += batch.length;
+				for (const email of batch) failedRecipients.add(email.to);
+			}
 		}
+
+		return { sent: totalSent, failed: totalFailed, failedRecipients };
 	} else {
 		// Mock mode for development
 		console.log(`  📧 [MOCK] Batch of ${emails.length} emails:`);
@@ -281,7 +299,7 @@ async function sendEmailBatch(emails: EmailMessage[]): Promise<{ sent: number; f
 		if (emails.length > 3) {
 			console.log(`     ... and ${emails.length - 3} more`);
 		}
-		return { sent: emails.length, failed: 0 };
+		return { sent: emails.length, failed: 0, failedRecipients: new Set() };
 	}
 }
 
@@ -328,16 +346,21 @@ async function processNewMilestonesNotification(
 		return;
 	}
 
-	// Find the earliest queue item timestamp - only include milestones created around this time
-	// Use a small buffer (1 minute) to handle race conditions between milestone creation and queue insertion
+	// Find the earliest queue item timestamp - only include milestones published
+	// around this time. This has to key off publishedAt, not createdAt: a draft
+	// can be created weeks before it goes live, and the queue entry is written at
+	// publish time. A small buffer (1 minute) covers the gap between the publish
+	// write and the queue insert.
 	const earliestQueueTime = queueItems.reduce(
 		(min, item) => (item.createdAt < min ? item.createdAt : min),
 		queueItems[0].createdAt
 	);
 	const cutoffTime = new Date(earliestQueueTime.getTime() - 60 * 1000); // 1 minute buffer
 
-	// Query fresh milestones that haven't been notified yet and were created around queue time
-	const newMilestones = await db
+	// Query fresh milestones that haven't been notified yet and went live around
+	// queue time. Entries published before publishedAt existed have it NULL, and
+	// NULL fails the comparison, so no historical backlog can be swept up here.
+	const publishedMilestones = await db
 		.select({
 			id: milestone.id,
 			title: milestone.title,
@@ -348,17 +371,51 @@ async function processNewMilestonesNotification(
 			and(
 				eq(milestone.published, true),
 				sql`${milestone.notifiedAt} IS NULL`,
-				gte(milestone.createdAt, cutoffTime)
+				gte(milestone.publishedAt, cutoffTime)
 			)
 		)
 		.orderBy(desc(milestone.createdAt));
 	
-	if (newMilestones.length === 0) {
+	if (publishedMilestones.length === 0) {
 		// Mark all queue items as skipped (milestones already notified or unpublished)
 		for (const item of queueItems) {
 			await db
 				.update(notificationQueue)
 				.set({ status: 'skipped', sentAt: new Date(), error: 'No unnotified milestones found' })
+				.where(eq(notificationQueue.id, item.id));
+		}
+		return;
+	}
+
+	// Get segment names plus the ticker each segment belongs to, so email links
+	// point at the canonical /t/<slug>/entry/<id> URL.
+	const segmentIds = [...new Set(publishedMilestones.map(m => m.segmentId))];
+	const segments = await db
+		.select({
+			id: segment.id,
+			name: segment.name,
+			tickerSlug: ticker.slug,
+			tickerName: ticker.name,
+			tickerPublished: ticker.published
+		})
+		.from(segment)
+		.innerJoin(ticker, eq(segment.tickerId, ticker.id))
+		.where(inArray(segment.id, segmentIds));
+
+	const segmentMap = new Map(segments.map(s => [s.id, s]));
+
+	// An entry inside an unpublished ticker is invisible to everyone but admins,
+	// so mailing it out would leak the title and hand subscribers a dead link.
+	// Leave those unnotified - they go out when the ticker itself is published.
+	const newMilestones = publishedMilestones.filter(
+		m => segmentMap.get(m.segmentId)?.tickerPublished === true
+	);
+
+	if (newMilestones.length === 0) {
+		for (const item of queueItems) {
+			await db
+				.update(notificationQueue)
+				.set({ status: 'skipped', sentAt: new Date(), error: 'No milestones in a published ticker' })
 				.where(eq(notificationQueue.id, item.id));
 		}
 		return;
@@ -402,26 +459,11 @@ async function processNewMilestonesNotification(
 		userGroupMap.get(ug.userId)!.add(ug.groupId);
 	}
 
-	// Get segment names plus the ticker each segment belongs to, so email
-	// links point at the canonical /t/<slug>/entry/<id> URL.
-	const segmentIds = [...new Set(newMilestones.map(m => m.segmentId))];
-	const segments = await db
-		.select({
-			id: segment.id,
-			name: segment.name,
-			tickerSlug: ticker.slug,
-			tickerName: ticker.name
-		})
-		.from(segment)
-		.innerJoin(ticker, eq(segment.tickerId, ticker.id))
-		.where(inArray(segment.id, segmentIds));
-
-	const segmentMap = new Map(segments.map(s => [s.id, s]));
-
 	// Build per-subscriber email with only milestones they can access
 	const emails: EmailMessage[] = [];
-	// Track which milestones were actually sent to at least one subscriber
-	const milestonesActuallySent = new Set<string>();
+	// recipient -> the milestones their email covers, so a milestone is only
+	// marked notified once a recipient it reached actually received it
+	const milestonesByRecipient = new Map<string, string[]>();
 
 	for (const subscriber of allSubscribers) {
 		const userGroupIds = userGroupMap.get(subscriber.userId) ?? new Set();
@@ -445,10 +487,7 @@ async function processNewMilestonesNotification(
 			continue;
 		}
 
-		// Track that these milestones will be sent to at least one person
-		for (const m of accessibleMilestones) {
-			milestonesActuallySent.add(m.id);
-		}
+		milestonesByRecipient.set(subscriber.email, accessibleMilestones.map(m => m.id));
 
 		const milestoneInfos: MilestoneInfo[] = accessibleMilestones.map(m => {
 			const seg = segmentMap.get(m.segmentId);
@@ -490,20 +529,25 @@ async function processNewMilestonesNotification(
 	}
 
 	// Send batch
-	const { sent, failed } = await sendEmailBatch(emails);
+	const { sent, failed, failedRecipients } = await sendEmailBatch(emails);
+	console.log(`  📨 new_milestones: ${sent} sent, ${failed} failed (${newMilestones.length} entries)`);
 
 	const now = new Date();
 
-	// Only mark milestones as notified if they were actually sent to someone
-	if (failed < emails.length) {
-		for (const m of newMilestones) {
-			if (milestonesActuallySent.has(m.id)) {
-				await db
-					.update(milestone)
-					.set({ notifiedAt: now })
-					.where(eq(milestone.id, m.id));
-			}
-		}
+	// A milestone counts as notified only if it reached a recipient whose email
+	// actually went out. Recipients in a failed batch leave their milestones
+	// unnotified so a retry can pick them up.
+	const milestonesActuallySent = new Set<string>();
+	for (const [recipient, ids] of milestonesByRecipient) {
+		if (failedRecipients.has(recipient)) continue;
+		for (const id of ids) milestonesActuallySent.add(id);
+	}
+
+	for (const id of milestonesActuallySent) {
+		await db
+			.update(milestone)
+			.set({ notifiedAt: now })
+			.where(eq(milestone.id, id));
 	}
 
 	// Mark queue items as sent/failed
@@ -624,6 +668,7 @@ async function processQueue(): Promise<void> {
 
 				// Send batch
 				const { sent, failed } = await sendEmailBatch(emails);
+				console.log(`  📨 ${typeId}: ${sent} sent, ${failed} failed`);
 
 				await db
 					.update(notificationQueue)

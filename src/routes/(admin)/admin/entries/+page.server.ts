@@ -175,6 +175,7 @@ export const actions: Actions = {
 			date: new Date(dateStr),
 			avatar: avatar || null,
 			published: true,
+			publishedAt: new Date(),
 			createdAt: new Date()
 		});
 
@@ -280,7 +281,10 @@ export const actions: Actions = {
 				description: description || null,
 				date: new Date(dateStr),
 				meta,
-				published
+				published,
+				// Only stamp on the draft -> published transition; re-saving a
+				// published entry must not reopen its notification window.
+				...(isFirstPublish ? { publishedAt: new Date() } : {})
 			})
 			.where(eq(milestone.id, milestoneId));
 
@@ -601,7 +605,7 @@ export const actions: Actions = {
 
 		await db
 			.update(milestone)
-			.set({ published: true })
+			.set({ published: true, ...(wasUnpublished ? { publishedAt: new Date() } : {}) })
 			.where(eq(milestone.id, milestoneId));
 
 		// Send notification to subscribers (only on first publish)
