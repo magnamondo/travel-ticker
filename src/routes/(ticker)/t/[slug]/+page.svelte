@@ -537,7 +537,7 @@
 	.timeline-section {
 		max-width: 900px;
 		margin: 0 auto;
-		padding: 2rem 1rem;
+		padding: 0.25rem 1rem 2rem;
 	}
 
 	.timeline-header {
@@ -1126,7 +1126,7 @@
 
 	@media (max-width: 768px) {
 		.timeline-section {
-			padding: 1.5rem 0.75rem;
+			padding: 0.25rem 0.75rem 1.5rem;
 		}
 
 		.timeline-header {

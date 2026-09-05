@@ -122,7 +122,7 @@
 	.index-section {
 		max-width: 1120px;
 		margin: 0 auto;
-		padding: 3rem 1.25rem 5rem;
+		padding: 0.25rem 1.25rem 5rem;
 	}
 
 	.index-header {
@@ -373,7 +373,7 @@
 
 	@media (max-width: 640px) {
 		.index-section {
-			padding: 2rem 1rem 3.5rem;
+			padding: 0.25rem 1rem 3.5rem;
 		}
 
 		.ticker-grid,
