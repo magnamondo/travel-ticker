@@ -9,7 +9,15 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (needed for build)
-RUN npm ci
+#
+# --ignore-scripts is required: better-sqlite3 v13 ships prebuilt binaries for
+# every platform (including linuxmusl-x64, which is what alpine needs) and has
+# "gypfile": false, but npm still injects a `node-gyp rebuild` install step for
+# it. Without python3/make/g++ in the image that fails the build; with them it
+# would pointlessly recompile a binary the package already ships. Nothing else
+# in the tree needs its install scripts - esbuild resolves its platform binary
+# through its optional dependency, and vite runs `svelte-kit sync` itself.
+RUN npm ci --ignore-scripts
 
 # =============================================================================
 # STAGE 2: Build SvelteKit app (only for server)
@@ -57,7 +65,8 @@ COPY --from=builder /app/scripts scripts/
 
 # Install production dependencies + drizzle-kit for migrations
 # No tsx/esbuild needed - worker is pre-compiled in build stage
-RUN npm ci --omit=dev && npm install drizzle-kit drizzle-orm
+RUN npm ci --omit=dev --ignore-scripts && \
+    npm install --ignore-scripts drizzle-kit drizzle-orm
 
 # Create separate directories for database (private) and uploads (public)
 # Database is NOT in the uploads path to prevent any path traversal attacks
@@ -101,7 +110,7 @@ COPY --from=builder /app/build/notification-worker.mjs build/
 COPY --from=builder /app/package*.json ./
 
 # Install only production dependencies (no tsx/esbuild needed)
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copy entrypoint
 COPY --from=builder /app/docker-entrypoint.sh ./

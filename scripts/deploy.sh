@@ -11,6 +11,8 @@
 #   -i, --identity FILE    Path to SSH private key file
 #   --dry-run              Show what would be transferred without actually doing it
 #   --delete               Remove files on remote that don't exist locally (careful!)
+#   --no-restart           Only sync files; skip the remote 'docker compose up -d --build'
+#   --restart-only         Skip the file sync; only run the remote docker compose step
 #
 # Examples:
 #   ./scripts/deploy.sh deploy@myserver.com:/var/www/travel-ticker
@@ -43,6 +45,10 @@ DRY_RUN=""
 DELETE=""
 TARGET=""
 SSH_KEY="${DEPLOY_KEY:-}"
+# Rebuild + restart the remote docker compose stack after syncing.
+# Set DEPLOY_RESTART=0 (env or .deploy.env) to opt out by default.
+RESTART="${DEPLOY_RESTART:-1}"
+SYNC=1
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -52,6 +58,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --delete)
             DELETE="--delete"
+            shift
+            ;;
+        --no-restart)
+            RESTART=0
+            shift
+            ;;
+        --restart-only)
+            SYNC=0
+            RESTART=1
             shift
             ;;
         -i|--identity)
@@ -82,10 +97,22 @@ if [ -z "$TARGET" ]; then
     echo "  -i, --identity FILE    SSH private key file"
     echo "  --dry-run              Show what would be transferred"
     echo "  --delete               Remove remote files not in source"
+    echo "  --no-restart           Skip the remote docker compose rebuild"
+    echo "  --restart-only         Skip the sync, only rebuild remotely"
     echo ""
     echo "Environment variables (or use .deploy.env file):"
     echo "  DEPLOY_TARGET    Default target (user@host:/path)"
     echo "  DEPLOY_KEY       Default SSH key file"
+    echo "  DEPLOY_RESTART   Set to 0 to skip the remote rebuild by default"
+    exit 1
+fi
+
+# Split target into host and remote path (needed for the remote docker step)
+REMOTE_HOST="${TARGET%%:*}"
+REMOTE_PATH="${TARGET#*:}"
+if [ "$RESTART" = "1" ] && { [ "$REMOTE_HOST" = "$TARGET" ] || [ -z "$REMOTE_PATH" ]; }; then
+    echo -e "${RED}Error: Target must be user@host:/path to run the remote rebuild${NC}"
+    echo "   Got: $TARGET  (use --no-restart to sync only)"
     exit 1
 fi
 
@@ -106,7 +133,11 @@ echo "   Target: $TARGET"
 [ -n "$SSH_KEY" ] && echo "   SSH Key: $SSH_KEY"
 [ -n "$DRY_RUN" ] && echo -e "   ${YELLOW}(dry run - no actual changes)${NC}"
 [ -n "$DELETE" ] && echo -e "   ${YELLOW}(delete mode - removing orphaned files)${NC}"
+[ "$SYNC" = "0" ] && echo -e "   ${YELLOW}(restart only - skipping file sync)${NC}"
+[ "$RESTART" = "0" ] && echo -e "   ${YELLOW}(no restart - remote stack left untouched)${NC}"
 echo ""
+
+if [ "$SYNC" = "1" ]; then
 
 # Build rsync exclude patterns from .gitignore
 # rsync uses different syntax than .gitignore, so we need to handle some cases
@@ -177,10 +208,46 @@ else
         ./ "$TARGET"
 fi
 
+if [ -z "$DRY_RUN" ]; then
+    echo ""
+    echo -e "${GREEN}✅ Files synced${NC}"
+fi
+
+fi  # end SYNC
+
+# Rebuild and restart the remote stack
+if [ "$RESTART" = "1" ]; then
+    # .git is not deployed, so stamp the build with the local commit
+    GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+
+    SSH_CMD=(ssh)
+    [ -n "$SSH_KEY" ] && SSH_CMD+=(-i "$SSH_KEY")
+
+    # Runs in the deployed directory on the remote host
+    REMOTE_SCRIPT="cd $(printf '%q' "$REMOTE_PATH") && GIT_SHA=$(printf '%q' "$GIT_SHA") docker compose up -d --build --remove-orphans && docker compose ps"
+
+    echo ""
+    if [ -n "$DRY_RUN" ]; then
+        echo -e "${YELLOW}🐳 Would run on $REMOTE_HOST:${NC}"
+        echo "   $REMOTE_SCRIPT"
+    else
+        echo -e "${CYAN}🐳 Rebuilding remote stack on $REMOTE_HOST...${NC}"
+        if ! "${SSH_CMD[@]}" "$REMOTE_HOST" "$REMOTE_SCRIPT"; then
+            echo ""
+            echo -e "${RED}❌ Remote 'docker compose up -d --build' failed${NC}"
+            echo "   Files were synced. Investigate with:"
+            echo "     ssh $REMOTE_HOST 'cd $REMOTE_PATH && docker compose logs --tail=50'"
+            exit 1
+        fi
+    fi
+fi
+
 echo ""
 if [ -n "$DRY_RUN" ]; then
-    echo -e "${YELLOW}✅ Dry run complete - no files were transferred${NC}"
+    echo -e "${YELLOW}✅ Dry run complete - nothing was changed${NC}"
     echo "   Remove --dry-run to perform actual deployment"
+elif [ "$RESTART" = "1" ]; then
+    echo -e "${GREEN}✅ Deployment complete - remote stack rebuilt and running!${NC}"
 else
     echo -e "${GREEN}✅ Deployment complete!${NC}"
     echo ""
