@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
+
 	type MediaItem = {
 		type: 'image' | 'video';
 		url: string;
@@ -30,16 +32,14 @@
 	);
 	let currentItem = $derived(mediaItems[activeIndex]);
 
-	// Image loading state
-	let loadedUrls = $state(new Set<string>());
+	// Image loading state (SvelteSet is reactive, so mutating it is enough)
+	const loadedUrls = new SvelteSet<string>();
 	let imageLoading = $derived(
 		currentItem?.type === 'image' && !loadedUrls.has(currentItem.url)
 	);
 
 	function handleImageLoad(url: string) {
 		loadedUrls.add(url);
-		// Trigger reactivity
-		loadedUrls = new Set(loadedUrls);
 	}
 
 	// Preload adjacent images
@@ -121,9 +121,39 @@
 	let zoomScale = $state(1);
 	let zoomX = $state(0);
 	let zoomY = $state(0);
-	let isZoomed = $derived(zoomScale > 1.05);
+	let isZoomed = $derived(zoomScale > 1.01);
 	const MIN_ZOOM = 1;
 	const MAX_ZOOM = 4;
+	const ZOOM_SNAP_BACK = 1.1; // release below this and we snap back to 1x
+	const DOUBLE_TAP_ZOOM = 2.5;
+	let imageEl = $state<HTMLImageElement | null>(null);
+
+	// Geometry of the image's layout box, captured when a gesture starts.
+	// zoomX/zoomY are screen-space offsets applied *after* scaling, so the
+	// layout centre is the on-screen centre minus the current offset.
+	type ImageBox = { centerX: number; centerY: number; width: number; height: number };
+	let gestureBox: ImageBox | null = null;
+
+	function getImageBox(): ImageBox | null {
+		if (!imageEl) return null;
+		const rect = imageEl.getBoundingClientRect();
+		return {
+			centerX: rect.left + rect.width / 2 - zoomX,
+			centerY: rect.top + rect.height / 2 - zoomY,
+			width: imageEl.offsetWidth,
+			height: imageEl.offsetHeight
+		};
+	}
+
+	// Keep the scaled image from being dragged past its own edges
+	function clampPan() {
+		const box = gestureBox;
+		if (!box) return;
+		const boundX = Math.max(0, (box.width * zoomScale - box.width) / 2);
+		const boundY = Math.max(0, (box.height * zoomScale - box.height) / 2);
+		zoomX = Math.min(boundX, Math.max(-boundX, zoomX));
+		zoomY = Math.min(boundY, Math.max(-boundY, zoomY));
+	}
 	
 	// Reset zoom when changing images or closing
 	function resetZoom() {
@@ -132,6 +162,7 @@
 		zoomY = 0;
 		initialZoomX = 0;
 		initialZoomY = 0;
+		gestureBox = null;
 	}
 	
 	// Reset zoom when lightbox closes
@@ -187,33 +218,38 @@
 		};
 	}
 	
-	function handleTouchStart(e: TouchEvent) {
-		// Handle pinch start (two fingers)
-		if (e.touches.length === 2) {
-			isPinching = true;
-			isSwiping = false;
-			isPanning = false;
-			initialPinchDistance = getDistance(e.touches[0], e.touches[1]);
-			initialPinchScale = zoomScale;
-			initialZoomX = zoomX;
-			initialZoomY = zoomY;
-			const midpoint = getMidpoint(e.touches[0], e.touches[1]);
-			pinchCenterX = midpoint.x;
-			pinchCenterY = midpoint.y;
-			return;
-		}
-		
-		if (e.touches.length !== 1) return;
-		
-		const touch = e.touches[0];
-		
+	function startPinch(touch1: Touch, touch2: Touch) {
+		isPinching = true;
+		isSwiping = false;
+		isPanning = false;
+		swipeDirection = null;
+		touchDeltaX = 0;
+		touchDeltaY = 0;
+		lastTapTime = 0; // a pinch is never half of a double tap
+		gestureBox = getImageBox();
+		// Guard against both fingers landing on the same point (distance 0 -> NaN scale)
+		initialPinchDistance = Math.max(1, getDistance(touch1, touch2));
+		initialPinchScale = zoomScale;
+		initialZoomX = zoomX;
+		initialZoomY = zoomY;
+		const midpoint = getMidpoint(touch1, touch2);
+		pinchCenterX = midpoint.x;
+		pinchCenterY = midpoint.y;
+	}
+
+	function beginSingleTouch(touch: Touch) {
 		// If zoomed, start panning instead of swiping
 		if (isZoomed) {
 			isPanning = true;
+			isSwiping = false;
+			swipeDirection = null;
+			touchDeltaX = 0;
+			touchDeltaY = 0;
 			panStartX = touch.clientX;
 			panStartY = touch.clientY;
 			initialZoomX = zoomX;
 			initialZoomY = zoomY;
+			gestureBox = getImageBox();
 			return;
 		}
 		
@@ -222,8 +258,21 @@
 		touchDeltaX = 0;
 		touchDeltaY = 0;
 		isSwiping = false;
+		isPanning = false;
 		swipeDirection = null;
 		touchStartTime = Date.now();
+	}
+
+	function handleTouchStart(e: TouchEvent) {
+		// Handle pinch start (two fingers)
+		if (e.touches.length === 2) {
+			startPinch(e.touches[0], e.touches[1]);
+			return;
+		}
+		
+		if (e.touches.length !== 1 || isPinching) return;
+		
+		beginSingleTouch(e.touches[0]);
 	}
 	
 	function handleTouchMove(e: TouchEvent) {
@@ -231,21 +280,27 @@
 		if (e.touches.length === 2 && isPinching) {
 			e.preventDefault();
 			const currentDistance = getDistance(e.touches[0], e.touches[1]);
-			const scaleChange = currentDistance / initialPinchDistance;
-			let newScale = initialPinchScale * scaleChange;
-			
-			// Clamp scale
-			newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
+			const newScale = Math.max(
+				MIN_ZOOM,
+				Math.min(MAX_ZOOM, initialPinchScale * (currentDistance / initialPinchDistance))
+			);
+			// Ratio actually applied, so spreading past MAX_ZOOM stops moving the image too
+			const ratio = newScale / initialPinchScale;
 			zoomScale = newScale;
 			
-			// Adjust position to zoom toward pinch center
+			// Keep the image point under the pinch centroid pinned to the centroid.
+			// A point at layout offset u renders at centre + scale * u + offset, so
+			// solving for the offset that holds u fixed gives the terms below.
 			const midpoint = getMidpoint(e.touches[0], e.touches[1]);
-			if (newScale > 1) {
-				// Simple centering - keep the pinch center stable
-				const scaleDiff = newScale / initialPinchScale;
-				zoomX = (midpoint.x - pinchCenterX) + initialZoomX * scaleDiff;
-				zoomY = (midpoint.y - pinchCenterY) + initialZoomY * scaleDiff;
+			const box = gestureBox;
+			if (box) {
+				zoomX = (midpoint.x - box.centerX) - ratio * (pinchCenterX - box.centerX) + ratio * initialZoomX;
+				zoomY = (midpoint.y - box.centerY) - ratio * (pinchCenterY - box.centerY) + ratio * initialZoomY;
+			} else {
+				zoomX = (midpoint.x - pinchCenterX) + ratio * initialZoomX;
+				zoomY = (midpoint.y - pinchCenterY) + ratio * initialZoomY;
 			}
+			clampPan();
 			return;
 		}
 		
@@ -257,6 +312,7 @@
 			const deltaY = touch.clientY - panStartY;
 			zoomX = initialZoomX + deltaX;
 			zoomY = initialZoomY + deltaY;
+			clampPan();
 			return;
 		}
 		
@@ -294,11 +350,21 @@
 		// Handle pinch end
 		if (isPinching) {
 			isPinching = false;
-			initialZoomX = zoomX;
-			initialZoomY = zoomY;
 			// Snap back to 1x if close enough
-			if (zoomScale < 1.1) {
+			if (zoomScale < ZOOM_SNAP_BACK) {
 				resetZoom();
+			} else {
+				clampPan();
+				initialZoomX = zoomX;
+				initialZoomY = zoomY;
+			}
+			
+			// Fingers still down: continue as a pinch or a pan/swipe instead of
+			// falling through with a stale touch origin (which read as a huge swipe)
+			if (e.touches.length >= 2) {
+				startPinch(e.touches[0], e.touches[1]);
+			} else if (e.touches.length === 1) {
+				beginSingleTouch(e.touches[0]);
 			}
 			return;
 		}
@@ -352,13 +418,16 @@
 				if (isZoomed) {
 					resetZoom();
 				} else {
-					// Zoom to 2x centered on tap location
-					zoomScale = 2.5;
-					// Center the zoom on the tap point (relative to viewport center)
-					const viewportCenterX = window.innerWidth / 2;
-					const viewportCenterY = window.innerHeight / 2;
-					zoomX = (viewportCenterX - touch.clientX) * (zoomScale - 1);
-					zoomY = (viewportCenterY - touch.clientY) * (zoomScale - 1);
+					// Zoom in centered on the tap location. The image box is offset from
+					// the viewport centre (counter/thumbnails below), so anchor on it.
+					const box = getImageBox();
+					gestureBox = box;
+					zoomScale = DOUBLE_TAP_ZOOM;
+					const centerX = box ? box.centerX : window.innerWidth / 2;
+					const centerY = box ? box.centerY : window.innerHeight / 2;
+					zoomX = (centerX - touch.clientX) * (zoomScale - 1);
+					zoomY = (centerY - touch.clientY) * (zoomScale - 1);
+					clampPan();
 				}
 				lastTapTime = 0; // Reset to prevent triple-tap issues
 				return;
@@ -408,11 +477,9 @@
 	let overlayOpacity = $derived(Math.max(0, 1 - Math.abs(touchDeltaY) / 300));
 	let contentScale = $derived(Math.max(0.5, 1 - Math.abs(touchDeltaY) / 600));
 	
-	// Combined transform for zoomed image
+	// Combined transform for zoomed image (identity while at rest)
 	let imageTransform = $derived(
-		isZoomed || isPinching
-			? `scale(${zoomScale}) translate(${zoomX / zoomScale}px, ${zoomY / zoomScale}px)`
-			: ''
+		`translate(${zoomX}px, ${zoomY}px) scale(${zoomScale})`
 	);
 </script>
 
@@ -481,7 +548,8 @@
 						class="lightbox-image" 
 						class:loaded={!imageLoading}
 						class:zoomed={isZoomed || isPinching}
-						style={imageTransform ? `transform: ${imageTransform}` : ''}
+						style="transform: {imageTransform}"
+						bind:this={imageEl}
 						onload={() => handleImageLoad(currentItem.url)}
 					/>
 				</div>
@@ -618,8 +686,8 @@
 	}
 	
 	.lightbox-image.zoomed {
-		max-width: none;
-		max-height: none;
+		/* Size stays the fitted size - the zoom is entirely in the transform,
+		   otherwise the image jumps to its natural pixel size mid-gesture */
 		border-radius: 0;
 		transition: none;
 		opacity: 1;
