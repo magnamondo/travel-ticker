@@ -2,6 +2,7 @@
 	import '../../app.css';
 	import { resolve } from '$app/paths';
 	import logo from '$lib/assets/favicon.svg';
+	import SiteFooter from '$lib/components/SiteFooter.svelte';
 
 	let { children, data } = $props();
 </script>
@@ -27,6 +28,7 @@
 		{@render children()}
 	</main>
 </div>
+<SiteFooter />
 
 <style>
 	.app-layout {

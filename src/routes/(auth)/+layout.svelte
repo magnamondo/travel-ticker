@@ -2,6 +2,7 @@
     import '../../app.css';
     import { resolve } from '$app/paths';
     import logo from '$lib/assets/favicon.svg';
+    import SiteFooter from '$lib/components/SiteFooter.svelte';
     let { children } = $props();
 
 </script>
@@ -18,6 +19,7 @@
         {@render children()}
     </div>
 </div>
+<SiteFooter />
 
 <style>
     .public-layout {
